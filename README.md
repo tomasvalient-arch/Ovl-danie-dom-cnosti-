@@ -30,7 +30,11 @@ Zariadenia sa lokálne ovládajú pomocou *local key*, ktorý pozná len Tuya cl
    python -m tinytuya wizard
    ```
    Wizard sa opýta na *Access ID* a *Access Secret* projektu a vytvorí súbor `devices.json` (aj s IP adresami, ak ich nájde v sieti).
-4. V appke ťukni na **Import** a vlož obsah `devices.json`. Alebo pridaj zariadenie ručne tlačidlom **+**.
+4. V appke ťukni na ⋮ → **Import zariadení** a vlož obsah `devices.json`. Alebo pridaj zariadenie ručne tlačidlom **+**.
+
+### Záloha a obnova (export / import)
+
+V appke ťukni na ⋮ → **Export zariadení**. Zobrazí sa JSON so všetkými zariadeniami (aj s názvami hodnôt, skrytými hodnotami a hlavným vypínačom). Skopíruj ho do schránky alebo ho pošli cez **Zdieľať** (napr. do Poznámok alebo na Telegram). Po preinštalovaní appky ho vložíš cez ⋮ → **Import zariadení** (tlačidlo „Vložiť zo schránky“) a zariadenia nemusíš zadávať ručne. Export obsahuje local keys, preto ho nikomu neposielaj.
 
 ## 3. Použitie
 
@@ -43,7 +47,7 @@ Zariadenia sa lokálne ovládajú pomocou *local key*, ktorý pozná len Tuya cl
 
 ## 4. Widgety na plochu
 
-1. Podrž prst na prázdnom mieste plochy, vyber **Widgety** a nájdi **Domov**. Pridaj widget **Domov – zariadenie**.
+1. Podrž prst na prázdnom mieste plochy, vyber **Widgety** a nájdi **Domov**. Pridaj widget **Domov – zariadenie** (je veľký 1×1, dá sa aj zväčšiť).
 2. Appka sa opýta, ktoré zariadenie widget ovláda. Vyber ho.
 3. Ťuknutím na widget sa zariadenie zapne alebo vypne. Žltá dlaždica = zapnuté, tmavá = vypnuté. Na každé zariadenie môžeš dať aj viac widgetov.
 

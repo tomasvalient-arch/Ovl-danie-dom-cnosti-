@@ -30,6 +30,22 @@ sealed interface DeviceState {
     data class Error(val message: String) : DeviceState
 }
 
+private fun readLabels(o: JSONObject): Map<String, String> {
+    val labels = mutableMapOf<String, String>()
+    val labelsJson = o.optJSONObject("labels")
+    if (labelsJson != null) {
+        for (k in labelsJson.keys()) {
+            labels[k] = labelsJson.optString(k)
+        }
+    }
+    return labels
+}
+
+private fun readHidden(o: JSONObject): Set<String> {
+    val hiddenArr = o.optJSONArray("hidden") ?: return emptySet()
+    return (0 until hiddenArr.length()).map { hiddenArr.getString(it) }.toSet()
+}
+
 /** Ukladá zariadenia do súkromného úložiska appky (SharedPreferences). */
 class DeviceStore(context: Context) {
     private val prefs = context.getSharedPreferences("domov", Context.MODE_PRIVATE)
@@ -40,19 +56,8 @@ class DeviceStore(context: Context) {
             val arr = JSONArray(raw)
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
-                val labels = mutableMapOf<String, String>()
-                val labelsJson = o.optJSONObject("labels")
-                if (labelsJson != null) {
-                    for (k in labelsJson.keys()) {
-                        labels[k] = labelsJson.optString(k)
-                    }
-                }
-                val hiddenArr = o.optJSONArray("hidden")
-                val hidden = if (hiddenArr == null) {
-                    emptySet()
-                } else {
-                    (0 until hiddenArr.length()).map { hiddenArr.getString(it) }.toSet()
-                }
+                val labels = readLabels(o)
+                val hidden = readHidden(o)
                 Device(
                     id = o.getString("id"),
                     name = o.getString("name"),
@@ -123,8 +128,33 @@ fun parseHidden(text: String): Set<String> =
     text.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
 /**
- * Import zo súboru devices.json, ktorý vytvorí `python -m tinytuya wizard`.
- * Očakáva pole objektov s poľami name, id, key a voliteľne ip a ver/version.
+ * Export všetkých zariadení do JSON. Formát je rovnaký ako devices.json z tinytuya
+ * (name, id, key, ip, ver), plus voliteľné labels, hidden a powerDp. Importuje sa naspäť cez Import.
+ */
+fun exportDevicesJson(devices: List<Device>): String {
+    val arr = JSONArray()
+    devices.forEach { d ->
+        val o = JSONObject()
+            .put("name", d.name)
+            .put("id", d.devId)
+            .put("key", d.localKey)
+            .put("ip", d.ip)
+            .put("ver", d.version)
+        if (d.labels.isNotEmpty()) {
+            val labels = JSONObject()
+            d.labels.forEach { (k, v) -> labels.put(k, v) }
+            o.put("labels", labels)
+        }
+        if (d.hidden.isNotEmpty()) o.put("hidden", JSONArray(d.hidden.toList()))
+        if (d.powerDp.isNotBlank()) o.put("powerDp", d.powerDp)
+        arr.put(o)
+    }
+    return arr.toString(2)
+}
+
+/**
+ * Import zo súboru devices.json, ktorý vytvorí `python -m tinytuya wizard`, alebo z exportu tejto appky.
+ * Očakáva pole objektov s poľami name, id, key a voliteľne ip, ver/version, labels, hidden, powerDp.
  */
 fun parseTinytuyaJson(text: String): List<Device> {
     val arr = JSONArray(text.trim())
@@ -141,6 +171,9 @@ fun parseTinytuyaJson(text: String): List<Device> {
             devId = id,
             localKey = key,
             version = if (ver in listOf("3.3", "3.4", "3.5")) ver else "3.3",
+            labels = readLabels(o),
+            hidden = readHidden(o),
+            powerDp = o.optString("powerDp", ""),
         )
     }
     return result

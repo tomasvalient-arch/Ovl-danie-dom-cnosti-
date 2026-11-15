@@ -24,6 +24,14 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
     private val _states = MutableStateFlow<Map<String, DeviceState>>(emptyMap())
     val states: StateFlow<Map<String, DeviceState>> = _states
 
+    /** Krátka správa o neúspešnom príkaze, ktorú UI ukáže ako upozornenie (null = žiadna). */
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice
+
+    fun dismissNotice() {
+        _notice.value = null
+    }
+
     /** Aktuálna WiFi sieť, alebo null ak telefón nie je pripojený na WiFi. */
     private val _wifi = MutableStateFlow<Network?>(null)
     val wifi: StateFlow<Network?> = _wifi
@@ -73,12 +81,16 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
             list = if (existing == null) {
                 list + new
             } else {
-                // zachovaj interné id, názov a kanály, aktualizuj kľúč, verziu a IP (ak ju import má)
+                // zachovaj interné id a názov, aktualizuj kľúč, verziu a IP (ak ju import má);
+                // názvy hodnôt, skryté hodnoty a vypínač prevezmi z importu, ak ich obsahuje
                 list.map {
                     if (it.devId == new.devId) it.copy(
                         localKey = new.localKey,
                         version = new.version,
                         ip = new.ip.ifBlank { it.ip },
+                        labels = if (new.labels.isNotEmpty()) new.labels else it.labels,
+                        hidden = if (new.hidden.isNotEmpty()) new.hidden else it.hidden,
+                        powerDp = new.powerDp.ifBlank { it.powerDp },
                     ) else it
                 }
             }
@@ -113,19 +125,23 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
     /** Nastaví jednu hodnotu (Boolean, číslo alebo text) a potom znova načíta stav zariadenia. */
     fun setValue(device: Device, dp: String, value: Any) = setValues(device, mapOf(dp to value))
 
-    /** Nastaví viac hodnôt naraz (napr. režim aj farbu svetla) a potom znova načíta stav zariadenia. */
+    /**
+     * Nastaví viac hodnôt naraz (napr. režim aj farbu svetla) a potom znova načíta stav zariadenia.
+     * Ak príkaz zlyhá, zariadenie zostane zobrazené s jeho skutočným stavom a ukáže sa upozornenie.
+     */
     fun setValues(device: Device, values: Map<String, Any>) {
         if (values.isEmpty()) return
         val network = _wifi.value ?: return
         val current = (_states.value[device.id] as? DeviceState.Online)?.values ?: emptyMap()
         apply(device, Result.success(current + values)) // okamžitá odozva v UI
         viewModelScope.launch {
+            val sent = withContext(Dispatchers.IO) {
+                runCatching { DeviceClient.setValues(network, device, values) }
+            }
+            sent.onFailure { _notice.value = "Príkaz sa nepodaril. " + DeviceClient.describe(it) }
+            delay(400) // zariadenie potrebuje chvíľu, kým zmenu premietne do stavu
             val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    DeviceClient.setValues(network, device, values)
-                    delay(400) // zariadenie potrebuje chvíľu, kým zmenu premietne do stavu
-                    DeviceClient.readState(network, device)
-                }
+                runCatching { DeviceClient.readState(network, device) }
             }
             apply(device, result)
         }

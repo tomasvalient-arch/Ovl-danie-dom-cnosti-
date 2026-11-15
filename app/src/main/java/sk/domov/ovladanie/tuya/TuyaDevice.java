@@ -115,6 +115,16 @@ public final class TuyaDevice {
 
     // ---------------------------------------------------------------- spojenie
 
+    /** Zariadenie odpovedalo s nenulovým návratovým kódom (napr. 1 = príkaz odmietnuté alebo zaneprázdnené). */
+    public static final class DeviceException extends IOException {
+        public final int code;
+
+        DeviceException(int code) {
+            super("Zariadenie vrátilo chybu (kód " + code + ")");
+            this.code = code;
+        }
+    }
+
     private static final class Frame {
         int seq;
         int cmd;
@@ -170,7 +180,7 @@ public final class TuyaDevice {
             for (int i = 0; i < 8; i++) {
                 Frame f = readFrame(key, false);
                 if (f.retcode != 0) {
-                    throw new IOException("Zariadenie vrátilo chybu (kód " + f.retcode + ")");
+                    throw new DeviceException(f.retcode);
                 }
                 for (int e : expected) {
                     if (f.cmd == e) {

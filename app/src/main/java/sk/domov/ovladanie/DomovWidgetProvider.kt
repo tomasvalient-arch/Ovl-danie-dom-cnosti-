@@ -77,8 +77,8 @@ class DomovWidgetProvider : AppWidgetProvider() {
             val isLight = values != null && Light.detect(values) != null
 
             val text = status ?: when {
-                device == null -> "Zariadenie chýba"
-                values == null || power == null -> "Ťukni pre prepnutie"
+                device == null -> "Chýba"
+                values == null || power == null -> "Ťukni"
                 on -> "Zapnuté"
                 else -> "Vypnuté"
             }
@@ -139,7 +139,7 @@ class DomovWidgetProvider : AppWidgetProvider() {
         fun toggle(context: Context, widgetId: Int) {
             val device = findDevice(context, widgetId)
             if (device == null) {
-                render(context, widgetId, "Zariadenie chýba", failed = true)
+                render(context, widgetId, "Chýba", failed = true)
                 return
             }
             val network = DeviceClient.wifiNetwork(context)

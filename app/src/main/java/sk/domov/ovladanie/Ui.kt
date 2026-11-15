@@ -2,6 +2,9 @@
 
 package sk.domov.ovladanie
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -26,10 +29,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -79,11 +86,14 @@ fun HomeScreen(vm: HomeViewModel) {
     val devices by vm.devices.collectAsState()
     val states by vm.states.collectAsState()
     val wifi by vm.wifi.collectAsState()
+    val notice by vm.notice.collectAsState()
     val wifiOn = wifi != null
 
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
+    var showExport by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
 
     val open = devices.find { it.id == openId }
     BackHandler(enabled = open != null) { openId = null }
@@ -93,6 +103,7 @@ fun HomeScreen(vm: HomeViewModel) {
             device = open,
             state = states[open.id] ?: DeviceState.Loading,
             wifiOn = wifiOn,
+            notice = notice,
             vm = vm,
             onBack = { openId = null },
         )
@@ -102,9 +113,24 @@ fun HomeScreen(vm: HomeViewModel) {
                 TopAppBar(
                     title = { Text("Domov") },
                     actions = {
-                        TextButton(onClick = { showImport = true }) { Text("Import") }
                         IconButton(onClick = { vm.refreshAll() }, enabled = wifiOn) {
                             Icon(Icons.Default.Refresh, contentDescription = "Obnoviť")
+                        }
+                        Box {
+                            IconButton(onClick = { menu = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                            }
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Import zariadení") },
+                                    onClick = { menu = false; showImport = true },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Export zariadení") },
+                                    enabled = devices.isNotEmpty(),
+                                    onClick = { menu = false; showExport = true },
+                                )
+                            }
                         }
                     },
                 )
@@ -122,6 +148,9 @@ fun HomeScreen(vm: HomeViewModel) {
             ) {
                 if (!wifiOn) {
                     item { WifiBanner() }
+                }
+                notice?.let { message ->
+                    item { NoticeBanner(message = message, onDismiss = { vm.dismissNotice() }) }
                 }
                 if (devices.isEmpty()) {
                     item { EmptyHint() }
@@ -153,6 +182,9 @@ fun HomeScreen(vm: HomeViewModel) {
             onImport = { vm.importDevices(it); showImport = false },
         )
     }
+    if (showExport) {
+        ExportDialog(json = exportDevicesJson(devices), onDismiss = { showExport = false })
+    }
 }
 
 @Composable
@@ -169,10 +201,24 @@ internal fun WifiBanner() {
     }
 }
 
+/** Upozornenie na neúspešný príkaz s tlačidlom OK. */
+@Composable
+internal fun NoticeBanner(message: String, onDismiss: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+            TextButton(onClick = onDismiss) { Text("OK") }
+        }
+    }
+}
+
 @Composable
 private fun EmptyHint() {
     Text(
-        text = "Zatiaľ tu nie je žiadne zariadenie. Pridaj ho tlačidlom + alebo naimportuj devices.json cez Import.",
+        text = "Zatiaľ tu nie je žiadne zariadenie. Pridaj ho tlačidlom + alebo naimportuj zariadenia cez menu ⋮ → Import zariadení.",
         modifier = Modifier.padding(vertical = 24.dp),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -382,6 +428,7 @@ internal fun DeviceDialog(
 
 @Composable
 private fun ImportDialog(onDismiss: () -> Unit, onImport: (List<Device>) -> Unit) {
+    val context = LocalContext.current
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -391,14 +438,27 @@ private fun ImportDialog(onDismiss: () -> Unit, onImport: (List<Device>) -> Unit
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Vlož obsah súboru devices.json, ktorý vytvorí „python -m tinytuya wizard“.",
+                    "Vlož JSON z exportu tejto appky alebo súbor devices.json, ktorý vytvorí „python -m tinytuya wizard“.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                TextButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        val clip = clipboard?.primaryClip
+                        val pasted = if (clip != null && clip.itemCount > 0) {
+                            clip.getItemAt(0).coerceToText(context).toString()
+                        } else {
+                            ""
+                        }
+                        text = pasted
+                        error = if (pasted.isBlank()) "Schránka je prázdna" else null
+                    },
+                ) { Text("Vložiť zo schránky") }
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it; error = null },
                     modifier = Modifier.fillMaxWidth().height(180.dp),
-                    label = { Text("devices.json") },
+                    label = { Text("JSON") },
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
@@ -416,5 +476,54 @@ private fun ImportDialog(onDismiss: () -> Unit, onImport: (List<Device>) -> Unit
             ) { Text("Importovať") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
+    )
+}
+
+/** Zobrazí export zariadení ako JSON a dá ho skopírovať do schránky alebo poslať cez Zdieľať. */
+@Composable
+private fun ExportDialog(json: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Export zariadení") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Obsahuje aj local keys, preto ho ulož na bezpečné miesto a nikomu neposielaj. " +
+                        "Po novej inštalácii ho vložíš cez Import zariadení.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedTextField(
+                    value = json,
+                    onValueChange = {},
+                    readOnly = true,
+                    modifier = Modifier.fillMaxWidth().height(200.dp),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            val clipboard = context.getSystemService(ClipboardManager::class.java)
+                            clipboard?.setPrimaryClip(ClipData.newPlainText("Domov – zariadenia", json))
+                            copied = true
+                        },
+                    ) { Text("Kopírovať") }
+                    Button(
+                        onClick = {
+                            val send = Intent(Intent.ACTION_SEND)
+                            send.type = "text/plain"
+                            send.putExtra(Intent.EXTRA_SUBJECT, "Domov – zariadenia")
+                            send.putExtra(Intent.EXTRA_TEXT, json)
+                            context.startActivity(Intent.createChooser(send, "Exportovať zariadenia"))
+                        },
+                    ) { Text("Zdieľať") }
+                }
+                if (copied) {
+                    Text("Skopírované do schránky.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Zavrieť") } },
     )
 }

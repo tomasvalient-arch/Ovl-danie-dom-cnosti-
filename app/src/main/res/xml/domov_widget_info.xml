@@ -3,10 +3,10 @@
     android:configure="sk.domov.ovladanie.WidgetConfigActivity"
     android:description="@string/widget_description"
     android:initialLayout="@layout/widget_tile"
-    android:minWidth="110dp"
+    android:minWidth="40dp"
     android:minHeight="40dp"
     android:resizeMode="horizontal|vertical"
     android:targetCellHeight="1"
-    android:targetCellWidth="2"
+    android:targetCellWidth="1"
     android:updatePeriodMillis="1800000"
     android:widgetCategory="home_screen" />

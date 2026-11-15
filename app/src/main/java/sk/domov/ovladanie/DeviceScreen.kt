@@ -54,6 +54,7 @@ fun DeviceScreen(
     device: Device,
     state: DeviceState,
     wifiOn: Boolean,
+    notice: String?,
     vm: HomeViewModel,
     onBack: () -> Unit,
 ) {
@@ -88,6 +89,7 @@ fun DeviceScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (!wifiOn) WifiBanner()
+            if (notice != null) NoticeBanner(message = notice, onDismiss = { vm.dismissNotice() })
             when (state) {
                 is DeviceState.Loading -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 is DeviceState.Error -> ErrorBox(message = state.message, onRetry = { vm.refresh(device) })
