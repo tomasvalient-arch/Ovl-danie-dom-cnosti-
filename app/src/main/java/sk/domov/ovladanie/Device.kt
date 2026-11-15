@@ -19,6 +19,10 @@ data class Device(
     val hidden: Set<String> = emptySet(),
     /** Číslo hodnoty (DP), ktorá je hlavný vypínač. Prázdne = nájde sa automaticky. */
     val powerDp: String = "",
+    /** Svetlo s dvoma zdrojmi: číslo hodnoty vypínača hlavného (bieleho) svetla. Prázdne = žiadny. */
+    val whiteSwitchDp: String = "",
+    /** Svetlo s dvoma zdrojmi: číslo hodnoty vypínača podhľadového (farebného) svetla. */
+    val colourSwitchDp: String = "",
 )
 
 sealed interface DeviceState {
@@ -68,6 +72,8 @@ class DeviceStore(context: Context) {
                     labels = labels,
                     hidden = hidden,
                     powerDp = o.optString("powerDp", ""),
+                    whiteSwitchDp = o.optString("whiteSwitchDp", ""),
+                    colourSwitchDp = o.optString("colourSwitchDp", ""),
                 )
             }
         } catch (e: Exception) {
@@ -91,6 +97,8 @@ class DeviceStore(context: Context) {
                     .put("labels", labels)
                     .put("hidden", JSONArray(d.hidden.toList()))
                     .put("powerDp", d.powerDp)
+                    .put("whiteSwitchDp", d.whiteSwitchDp)
+                    .put("colourSwitchDp", d.colourSwitchDp)
             )
         }
         prefs.edit().putString("devices", arr.toString()).apply()
@@ -104,7 +112,11 @@ class DeviceStore(context: Context) {
 fun powerDpOf(device: Device, values: Map<String, Any>): String? {
     if (device.powerDp.isNotBlank() && values[device.powerDp] is Boolean) return device.powerDp
     Light.detect(values)?.let { return it.power }
-    return values.entries.firstOrNull { it.value is Boolean }?.key
+    // fritéza: hlavný vypínač je len hodnota 1; štart/stop (2) nesmie byť hlavný vypínač, inak by widget spúšťal ohrev
+    Fryer.detect(values)?.let { return it.power }
+    // vypínače sekcií svetla s dvoma zdrojmi nie sú hlavný vypínač
+    val sectionSwitches = setOf(device.whiteSwitchDp.trim(), device.colourSwitchDp.trim())
+    return values.entries.firstOrNull { it.value is Boolean && it.key !in sectionSwitches }?.key
 }
 
 /** "20=Svetlo, 22=Jas" -> {20: Svetlo, 22: Jas} */
@@ -147,6 +159,8 @@ fun exportDevicesJson(devices: List<Device>): String {
         }
         if (d.hidden.isNotEmpty()) o.put("hidden", JSONArray(d.hidden.toList()))
         if (d.powerDp.isNotBlank()) o.put("powerDp", d.powerDp)
+        if (d.whiteSwitchDp.isNotBlank()) o.put("whiteSwitchDp", d.whiteSwitchDp)
+        if (d.colourSwitchDp.isNotBlank()) o.put("colourSwitchDp", d.colourSwitchDp)
         arr.put(o)
     }
     return arr.toString(2)
@@ -174,6 +188,8 @@ fun parseTinytuyaJson(text: String): List<Device> {
             labels = readLabels(o),
             hidden = readHidden(o),
             powerDp = o.optString("powerDp", ""),
+            whiteSwitchDp = o.optString("whiteSwitchDp", ""),
+            colourSwitchDp = o.optString("colourSwitchDp", ""),
         )
     }
     return result

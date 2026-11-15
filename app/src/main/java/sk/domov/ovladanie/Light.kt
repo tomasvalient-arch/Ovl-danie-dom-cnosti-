@@ -25,6 +25,30 @@ data class LightSpec(
     val handled: Set<String> get() = setOfNotNull(power, mode, bright, temp, color)
 }
 
+/**
+ * Svetlo s dvoma nezávislými zdrojmi (napr. stropné svetlo: hlavné biele + podhľadové farebné).
+ * Nemá režim (hodnota 21): biele svetlo má jas (22) a teplotu (23), farebné má farbu (24),
+ * ktorej jas je súčasťou farby. Vypínače jednotlivých sekcií (ak ich zariadenie má) sa nastavujú ručne.
+ */
+data class DualSpec(
+    val bright: String,
+    val temp: String,
+    val colour: String,
+    val whiteSwitch: String?,
+    val colourSwitch: String?,
+) {
+    val handled: Set<String> get() = setOfNotNull(bright, temp, colour, whiteSwitch, colourSwitch)
+}
+
+data class DualState(
+    val whitePercent: Int,
+    val temp: Float,
+    val colour: Hsv,
+    /** Stav vypínača bielej sekcie, alebo null ak vypínač nie je nastavený. */
+    val whiteOn: Boolean?,
+    val colourOn: Boolean?,
+)
+
 /** Odtieň 0–360, sýtosť 0–1, jas 0–1. */
 data class Hsv(val h: Float, val s: Float, val v: Float)
 
@@ -66,6 +90,50 @@ object Light {
         }
         return null
     }
+
+    /** Je zariadenie svetlo (jednoduché alebo s dvoma zdrojmi)? */
+    fun isLight(values: Map<String, Any>): Boolean =
+        detect(values) != null || detectDual(values, "", "") != null
+
+    /**
+     * Pozná svetlo s dvoma zdrojmi: číselný jas (22), číselná teplota (23) a farba (24) vo formáte HHHHSSSSVVVV,
+     * bez režimu (21). [whiteSwitch] a [colourSwitch] sú čísla hodnôt vypínačov sekcií (prázdne = žiadny).
+     */
+    fun detectDual(values: Map<String, Any>, whiteSwitch: String, colourSwitch: String): DualSpec? {
+        if (values["21"] is String) return null
+        val colour = values["24"] as? String ?: return null
+        if (values["22"] !is Number || values["23"] !is Number) return null
+        if (colour.length < 12 || !colour.take(12).all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return null
+        return DualSpec(
+            bright = "22",
+            temp = "23",
+            colour = "24",
+            whiteSwitch = whiteSwitch.trim().ifBlank { null },
+            colourSwitch = colourSwitch.trim().ifBlank { null },
+        )
+    }
+
+    fun readDual(spec: DualSpec, values: Map<String, Any>): DualState {
+        val percent = (((values[spec.bright] as? Number)?.toDouble() ?: 1000.0) / 10.0).roundToInt().coerceIn(1, 100)
+        val temp = (((values[spec.temp] as? Number)?.toDouble() ?: 0.0) / 1000.0).toFloat().coerceIn(0f, 1f)
+        val colour = parseColor(LightFormat.V2, values[spec.colour] as? String)
+        return DualState(
+            whitePercent = percent,
+            temp = temp,
+            colour = colour,
+            whiteOn = spec.whiteSwitch?.let { values[it] == true },
+            colourOn = spec.colourSwitch?.let { values[it] == true },
+        )
+    }
+
+    fun dualWhiteBrightness(spec: DualSpec, percent: Int): Map<String, Any> =
+        mapOf(spec.bright to max(10, percent.coerceIn(1, 100) * 10))
+
+    fun dualTemp(spec: DualSpec, temp: Float): Map<String, Any> =
+        mapOf(spec.temp to (temp.coerceIn(0f, 1f) * 1000f).roundToInt())
+
+    fun dualColour(spec: DualSpec, hsv: Hsv): Map<String, Any> =
+        mapOf(spec.colour to encodeColor(LightFormat.V2, hsv))
 
     // ------------------------------------------------------------ čítanie stavu
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import org.json.JSONArray
 import org.json.JSONObject
 import sk.domov.ovladanie.tuya.TuyaDevice
 import java.io.IOException
@@ -138,6 +139,32 @@ object StateCache {
 
     fun remove(context: Context, deviceId: String) {
         prefs(context).edit().remove("values_$deviceId").apply()
+    }
+}
+
+/**
+ * Režimy fritézy, ktoré appka už videla (napr. „Chips“). Zariadenie ich neposiela ako zoznam, takže sa appka
+ * naučí každú hodnotu, keď sa raz objaví (aj po prepnutí režimu v Tuya appke).
+ */
+object ModeMemory {
+    private fun prefs(context: Context) =
+        context.getSharedPreferences("domov_modes", Context.MODE_PRIVATE)
+
+    fun remember(context: Context, deviceId: String, mode: String) {
+        if (mode.isBlank()) return
+        val known = list(context, deviceId)
+        if (mode in known) return
+        prefs(context).edit().putString("modes_$deviceId", JSONArray(known + mode).toString()).apply()
+    }
+
+    fun list(context: Context, deviceId: String): List<String> {
+        val raw = prefs(context).getString("modes_$deviceId", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 }
 

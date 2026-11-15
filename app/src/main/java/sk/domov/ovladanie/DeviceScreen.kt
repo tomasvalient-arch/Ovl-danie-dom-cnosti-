@@ -38,15 +38,18 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 /** Detail jedného zariadenia: veľký vypínač, ovládanie podľa typu a zoznam všetkých hodnôt. */
 @Composable
@@ -59,6 +62,15 @@ fun DeviceScreen(
     onBack: () -> Unit,
 ) {
     var showEdit by remember { mutableStateOf(false) }
+
+    // Kým je detail otvorený, stav sa každé 4 sekundy obnoví (uvidíš zmeny z Tuya appky aj z tlačidla na zariadení).
+    val latestDevice by rememberUpdatedState(device)
+    LaunchedEffect(device.id, wifiOn) {
+        while (wifiOn) {
+            delay(4000)
+            vm.refresh(latestDevice, quiet = true)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -131,9 +143,12 @@ private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Bool
     val power = powerDpOf(device, values)
     val on = power != null && values[power] == true
     val spec = Light.detect(values)
+    val dual = if (spec == null) Light.detectDual(values, device.whiteSwitchDp, device.colourSwitchDp) else null
+    val fryer = if (spec == null && dual == null) Fryer.detect(values) else null
+    val hasControls = spec != null || dual != null || fryer != null
 
     if (power != null) {
-        PowerButton(on = on, enabled = wifiOn, isLight = spec != null) {
+        PowerButton(on = on, enabled = wifiOn, isLight = spec != null || dual != null) {
             vm.setValues(device, mapOf(power to !on))
         }
     }
@@ -147,15 +162,34 @@ private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Bool
         )
     }
 
-    // Ostatné hodnoty: pri svetle len pokročilé, pri ostatných zariadeniach všetky (okrem vypínača).
-    val rows = values.filterKeys { dp ->
-        dp !in device.hidden && dp != power && (spec == null || dp !in spec.handled)
+    if (dual != null) {
+        DualLightControls(
+            spec = dual,
+            values = values,
+            enabled = wifiOn && on,
+            onCommand = { vm.setValues(device, it) },
+        )
     }
-    var showAll by remember { mutableStateOf(false) }
-    val expanded = spec == null || showAll
+
+    if (fryer != null) {
+        FryerControls(
+            deviceId = device.id,
+            spec = fryer,
+            values = values,
+            // bez hodnoty hlavného vypínača (1) ovládanie nevypíname
+            enabled = wifiOn && (fryer.power == null || on),
+            onCommand = { vm.setValues(device, it) },
+        )
+    }
+
+    // Zoznam všetkých hodnôt s ich číslami (pri svetle zbalený), aby bolo vidieť, čo zariadenie hlási.
+    val rows = values.filterKeys { dp -> dp !in device.hidden }
+    // Svetlo s dvoma zdrojmi bez nastavených vypínačov: zoznam hneď rozbalíme, aby sa dali vypínače priradiť.
+    var showAll by remember { mutableStateOf(dual != null && dual.whiteSwitch == null && dual.colourSwitch == null) }
+    val expanded = !hasControls || showAll
 
     if (rows.isNotEmpty()) {
-        if (spec != null) {
+        if (hasControls) {
             TextButton(onClick = { showAll = !showAll }) {
                 Text(if (showAll) "Skryť ďalšie hodnoty" else "Ďalšie hodnoty (${rows.size})")
             }
@@ -166,8 +200,13 @@ private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Bool
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     rows.forEach { (dp, value) ->
+                        val role = when {
+                            dp == device.whiteSwitchDp.trim() -> " · vypínač hlavného svetla"
+                            dp == device.colourSwitchDp.trim() -> " · vypínač podhľadového svetla"
+                            else -> ""
+                        }
                         DpRow(
-                            label = device.labels[dp] ?: "Hodnota $dp",
+                            label = (device.labels[dp] ?: "Hodnota $dp") + role,
                             value = value,
                             enabled = wifiOn,
                             onSet = { vm.setValue(device, dp, it) },
@@ -180,9 +219,27 @@ private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Bool
                             } else {
                                 null
                             },
+                            onMakeWhiteSwitch = if (value is Boolean && dual != null) {
+                                { vm.addOrUpdate(device.copy(whiteSwitchDp = dp), reload = false) }
+                            } else {
+                                null
+                            },
+                            onMakeColourSwitch = if (value is Boolean && dual != null) {
+                                { vm.addOrUpdate(device.copy(colourSwitchDp = dp), reload = false) }
+                            } else {
+                                null
+                            },
                         )
                     }
                 }
+            }
+            if (dual != null && (dual.whiteSwitch == null || dual.colourSwitch == null)) {
+                Text(
+                    text = "Ako priradiť vypínače svetiel: v Tuya appke prepni Biela alebo Farba a pozri sa tu, ktorý " +
+                        "vypínač sa zmenil (obnovuje sa každé 4 s). Potom ťukni na jeho ⋮ a vyber, ktoré svetlo ovláda. " +
+                        "Vypínač môžeš vyskúšať aj ťuknutím priamo tu.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
             Text(
                 text = "Pri každej hodnote môžeš cez ⋮ zmeniť jej názov, skryť ju alebo ju nastaviť ako hlavný vypínač " +
@@ -191,7 +248,7 @@ private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Bool
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    } else if (spec == null && power == null) {
+    } else if (!hasControls && power == null) {
         Text(
             text = "Zariadenie nevrátilo žiadne hodnoty na zobrazenie.",
             style = MaterialTheme.typography.bodySmall,
@@ -235,6 +292,8 @@ private fun DpRow(
     onRename: (String) -> Unit,
     onHide: () -> Unit,
     onMakePower: (() -> Unit)?,
+    onMakeWhiteSwitch: (() -> Unit)? = null,
+    onMakeColourSwitch: (() -> Unit)? = null,
 ) {
     var editing by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
@@ -278,6 +337,18 @@ private fun DpRow(
                     DropdownMenuItem(
                         text = { Text("Nastaviť ako hlavný vypínač") },
                         onClick = { menu = false; onMakePower() },
+                    )
+                }
+                if (onMakeWhiteSwitch != null) {
+                    DropdownMenuItem(
+                        text = { Text("Vypínač hlavného svetla (biela)") },
+                        onClick = { menu = false; onMakeWhiteSwitch() },
+                    )
+                }
+                if (onMakeColourSwitch != null) {
+                    DropdownMenuItem(
+                        text = { Text("Vypínač podhľadového svetla (farba)") },
+                        onClick = { menu = false; onMakeColourSwitch() },
                     )
                 }
             }

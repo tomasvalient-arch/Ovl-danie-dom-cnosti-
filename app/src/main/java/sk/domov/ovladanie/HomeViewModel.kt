@@ -91,6 +91,8 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
                         labels = if (new.labels.isNotEmpty()) new.labels else it.labels,
                         hidden = if (new.hidden.isNotEmpty()) new.hidden else it.hidden,
                         powerDp = new.powerDp.ifBlank { it.powerDp },
+                        whiteSwitchDp = new.whiteSwitchDp.ifBlank { it.whiteSwitchDp },
+                        colourSwitchDp = new.colourSwitchDp.ifBlank { it.colourSwitchDp },
                     ) else it
                 }
             }
@@ -114,11 +116,25 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
         _devices.value.forEach { refresh(it) }
     }
 
-    fun refresh(device: Device) {
+    /** Zariadenia, ktorých stav sa práve načítava (aby sa dotazy nehromadili). */
+    private val refreshing = HashSet<String>()
+
+    /**
+     * Načíta stav zariadenia. [quiet] = pravidelné obnovovanie na pozadí: ak zlyhá a zariadenie bolo
+     * dovtedy v poriadku, obrazovka sa nemení (nezmizne ovládanie uprostred ťahania posuvníka).
+     */
+    fun refresh(device: Device, quiet: Boolean = false) {
         val network = _wifi.value ?: return // bez WiFi nemá zmysel pripájať sa
+        if (!refreshing.add(device.id)) return
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { DeviceClient.readState(network, device) } }
-            apply(device, result)
+            try {
+                val result = withContext(Dispatchers.IO) { runCatching { DeviceClient.readState(network, device) } }
+                val wasOnline = _states.value[device.id] is DeviceState.Online
+                if (quiet && result.isFailure && wasOnline) return@launch
+                apply(device, result)
+            } finally {
+                refreshing.remove(device.id)
+            }
         }
     }
 
@@ -151,6 +167,7 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun apply(device: Device, result: Result<Map<String, Any>>) {
         result.onSuccess {
             StateCache.save(app, device.id, it)
+            Fryer.detect(it)?.let { f -> (it[f.mode] as? String)?.let { m -> ModeMemory.remember(app, device.id, m) } }
             DomovWidgetProvider.redrawAll(app)
         }
         setState(

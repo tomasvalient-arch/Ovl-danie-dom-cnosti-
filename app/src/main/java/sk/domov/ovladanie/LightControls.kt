@@ -23,12 +23,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -106,6 +108,128 @@ fun LightControls(
     }
 }
 
+/**
+ * Svetlo s dvoma zdrojmi ako v Tuya appke: sekcia Podhľadové svetlo (farba a jas) a sekcia Hlavné svetlo
+ * (jas a teplota bielej). Ak sú nastavené vypínače sekcií, každá má vlastný vypínač.
+ */
+@Composable
+fun DualLightControls(
+    spec: DualSpec,
+    values: Map<String, Any>,
+    enabled: Boolean,
+    onCommand: (Map<String, Any>) -> Unit,
+) {
+    val st = Light.readDual(spec, values)
+    Column(
+        modifier = Modifier.alpha(if (enabled) 1f else 0.45f),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        if (!enabled) {
+            Text(
+                text = "Zapni svetlo, aby si mohol meniť jas a farby.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        val colourEnabled = enabled && st.colourOn != false
+        LightSection(
+            title = "Podhľadové svetlo (farba)",
+            switchOn = st.colourOn,
+            enabled = enabled,
+            onSwitch = { on -> spec.colourSwitch?.let { onCommand(mapOf(it to on)) } },
+        ) {
+            val c = st.colour
+            val v = max(c.v, 0.1f)
+            HsPicker(
+                hue = c.h,
+                sat = c.s,
+                enabled = colourEnabled,
+                onPick = { h, s -> onCommand(Light.dualColour(spec, Hsv(h, s, v))) },
+            )
+            LabeledSlider(
+                title = "Jas",
+                value = c.v.coerceIn(0.01f, 1f),
+                range = 0.01f..1f,
+                enabled = colourEnabled,
+                valueText = { "${(it * 100).roundToInt()} %" },
+                onFinished = { onCommand(Light.dualColour(spec, Hsv(c.h, c.s, it))) },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                COLOUR_SWATCH_HUES.forEach { hue ->
+                    Swatch(color = rgbColor(hue, 1f, 1f), enabled = colourEnabled) {
+                        onCommand(Light.dualColour(spec, Hsv(hue, 1f, v)))
+                    }
+                }
+            }
+        }
+
+        val whiteEnabled = enabled && st.whiteOn != false
+        LightSection(
+            title = "Hlavné svetlo (biela)",
+            switchOn = st.whiteOn,
+            enabled = enabled,
+            onSwitch = { on -> spec.whiteSwitch?.let { onCommand(mapOf(it to on)) } },
+        ) {
+            LabeledSlider(
+                title = "Jas",
+                value = st.whitePercent.toFloat(),
+                range = 1f..100f,
+                enabled = whiteEnabled,
+                valueText = { "${it.roundToInt()} %" },
+                onFinished = { onCommand(Light.dualWhiteBrightness(spec, it.roundToInt())) },
+            )
+            LabeledSlider(
+                title = "Teplota svetla",
+                value = st.temp,
+                range = 0f..1f,
+                enabled = whiteEnabled,
+                valueText = { if (it < 0.34f) "Teplá" else if (it < 0.67f) "Neutrálna" else "Studená" },
+                onFinished = { onCommand(Light.dualTemp(spec, it)) },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                WHITE_SWATCHES.forEach { (temp, color) ->
+                    Swatch(color = color, enabled = whiteEnabled) { onCommand(Light.dualTemp(spec, temp)) }
+                }
+            }
+        }
+
+        if (spec.whiteSwitch == null && spec.colourSwitch == null) {
+            Text(
+                text = "Samostatné vypínače hlavného a podhľadového svetla zatiaľ nie sú nastavené " +
+                    "(ozubené koliesko → Pokročilé).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** Jedna sekcia svetla: nadpis s voliteľným vypínačom a pod ním ovládanie. */
+@Composable
+private fun LightSection(
+    title: String,
+    switchOn: Boolean?,
+    enabled: Boolean,
+    onSwitch: (Boolean) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                if (switchOn != null) {
+                    Switch(checked = switchOn, onCheckedChange = onSwitch, enabled = enabled)
+                }
+            }
+            content()
+        }
+    }
+}
+
 @Composable
 private fun WhiteControls(
     spec: LightSpec,
@@ -172,13 +296,14 @@ private fun ColourControls(
 
 /** Posuvník, ktorý príkaz pošle až po pustení (nezahltí zariadenie počas ťahania). */
 @Composable
-private fun LabeledSlider(
+internal fun LabeledSlider(
     title: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     enabled: Boolean,
     valueText: (Float) -> String,
     onFinished: (Float) -> Unit,
+    steps: Int = 0,
 ) {
     var drag by remember(value) { mutableStateOf(value) }
     Column {
@@ -191,6 +316,7 @@ private fun LabeledSlider(
             onValueChange = { drag = it },
             onValueChangeFinished = { onFinished(drag) },
             valueRange = range,
+            steps = steps,
             enabled = enabled,
         )
     }

@@ -74,7 +74,7 @@ class DomovWidgetProvider : AppWidgetProvider() {
             val values = if (device != null) StateCache.load(context, device.id) else null
             val power = if (device != null && values != null) powerDpOf(device, values) else null
             val on = !failed && power != null && values?.get(power) == true
-            val isLight = values != null && Light.detect(values) != null
+            val isLight = values != null && Light.isLight(values)
 
             val text = status ?: when {
                 device == null -> "Chýba"

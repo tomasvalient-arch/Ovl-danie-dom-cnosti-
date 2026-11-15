@@ -6,7 +6,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -230,9 +233,11 @@ internal fun statusText(device: Device, state: DeviceState): String = when (stat
     is DeviceState.Error -> "Nedostupné – ťukni pre podrobnosti"
     is DeviceState.Online -> {
         val spec = Light.detect(state.values)
+        val fryer = Fryer.detect(state.values)
         val power = powerDpOf(device, state.values)
         when {
             spec != null -> Light.summary(spec, state.values)
+            fryer != null -> Fryer.summary(fryer, state.values)
             power == null -> "Pripojené"
             power != null && state.values[power] == true -> "Zapnuté"
             else -> "Vypnuté"
@@ -271,7 +276,7 @@ private fun DeviceTile(
     val values = (state as? DeviceState.Online)?.values
     val power = if (values != null) powerDpOf(device, values) else null
     val on = power != null && values?.get(power) == true
-    val isLight = values != null && Light.detect(values) != null
+    val isLight = values != null && Light.isLight(values)
     val container = if (on) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
 
     Card(
@@ -340,6 +345,8 @@ internal fun DeviceDialog(
     var key by remember { mutableStateOf(device?.localKey ?: "") }
     var version by remember { mutableStateOf(device?.version ?: "3.3") }
     var powerDp by remember { mutableStateOf(device?.powerDp ?: "") }
+    var whiteSw by remember { mutableStateOf(device?.whiteSwitchDp ?: "") }
+    var colourSw by remember { mutableStateOf(device?.colourSwitchDp ?: "") }
     var labels by remember { mutableStateOf(labelsToText(device?.labels ?: emptyMap())) }
     var hidden by remember { mutableStateOf(device?.hidden?.joinToString(", ") ?: "") }
 
@@ -384,6 +391,16 @@ internal fun DeviceDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
+                    value = whiteSw, onValueChange = { whiteSw = it },
+                    label = { Text("Svetlo s 2 zdrojmi: vypínač hlavného (bieleho), číslo hodnoty") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = colourSw, onValueChange = { colourSw = it },
+                    label = { Text("Svetlo s 2 zdrojmi: vypínač podhľadového (farebného), číslo hodnoty") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
                     value = labels, onValueChange = { labels = it },
                     label = { Text("Názvy hodnôt (napr. 20=Svetlo, 22=Jas)") },
                     modifier = Modifier.fillMaxWidth(),
@@ -408,6 +425,8 @@ internal fun DeviceDialog(
                             localKey = key.trim(),
                             version = version,
                             powerDp = powerDp.trim(),
+                            whiteSwitchDp = whiteSw.trim(),
+                            colourSwitchDp = colourSw.trim(),
                             labels = parseLabels(labels),
                             hidden = parseHidden(hidden),
                         )
@@ -432,6 +451,22 @@ private fun ImportDialog(onDismiss: () -> Unit, onImport: (List<Device>) -> Unit
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try {
+                val content = context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+                if (content.isNullOrBlank()) {
+                    error = "Súbor je prázdny"
+                } else {
+                    text = content
+                    error = null
+                }
+            } catch (e: Exception) {
+                error = "Súbor sa nepodarilo prečítať"
+            }
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Import zariadení") },
@@ -441,6 +476,9 @@ private fun ImportDialog(onDismiss: () -> Unit, onImport: (List<Device>) -> Unit
                     "Vlož JSON z exportu tejto appky alebo súbor devices.json, ktorý vytvorí „python -m tinytuya wizard“.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { pickFile.launch(arrayOf("*/*")) }) { Text("Vybrať súbor .json") }
+                }
                 TextButton(
                     onClick = {
                         val clipboard = context.getSystemService(ClipboardManager::class.java)
@@ -485,6 +523,17 @@ private fun ExportDialog(json: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     var copied by remember { mutableStateOf(false) }
 
+    val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                Toast.makeText(context, "Súbor je uložený", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Súbor sa nepodarilo uložiť", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Export zariadení") },
@@ -492,9 +541,13 @@ private fun ExportDialog(json: String, onDismiss: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Obsahuje aj local keys, preto ho ulož na bezpečné miesto a nikomu neposielaj. " +
-                        "Po novej inštalácii ho vložíš cez Import zariadení.",
+                        "Po novej inštalácii ho načítaš cez Import zariadení (Vybrať súbor .json).",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Button(
+                    onClick = { saveFile.launch("domov-zariadenia.json") },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Uložiť do súboru .json") }
                 OutlinedTextField(
                     value = json,
                     onValueChange = {},

@@ -53,5 +53,31 @@ fun main() {
     check("rgb cyan", Light.hsvToRgb(180f, 1f, 1f).toList() == listOf(0, 255, 255))
     check("rgb white", Light.hsvToRgb(0f, 0f, 1f).toList() == listOf(255, 255, 255))
     check("rgb 360 = red", Light.hsvToRgb(360f, 1f, 1f).toList() == listOf(255, 0, 0))
+    dualTests()
     println("ALL PASSED")
+}
+
+fun dualTests() {
+    // hodnoty z reálneho zariadenia (BW-CLT1): bez režimu, jas 1000, teplota 1000, farba, 26 = 0
+    val v = mapOf<String, Any>("20" to false, "22" to 1000, "23" to 1000, "24" to "0037000003e8", "26" to 0)
+    check("dual: nie je jednoduché svetlo", Light.detect(v) == null)
+    val d = Light.detectDual(v, "", "")!!
+    check("dual detect", d.bright == "22" && d.temp == "23" && d.colour == "24" && d.whiteSwitch == null && d.colourSwitch == null)
+    check("isLight dual", Light.isLight(v))
+    val st = Light.readDual(d, v)
+    check("dual white 100 %", st.whitePercent == 100)
+    check("dual temp 1.0", st.temp == 1f)
+    check("dual colour hsv", st.colour.h == 55f && st.colour.s == 0f && st.colour.v == 1f)
+    check("dual no switches -> null", st.whiteOn == null && st.colourOn == null)
+    val d2 = Light.detectDual(v + ("54" to true) + ("63" to false), "63", "54")!!
+    val st2 = Light.readDual(d2, v + ("54" to true) + ("63" to false))
+    check("dual switches read", st2.whiteOn == false && st2.colourOn == true && d2.handled.containsAll(setOf("54", "63")))
+    check("dual white bright 40", Light.dualWhiteBrightness(d, 40) == mapOf<String, Any>("22" to 400))
+    check("dual white bright min", Light.dualWhiteBrightness(d, 1) == mapOf<String, Any>("22" to 10))
+    check("dual temp 0.5", Light.dualTemp(d, 0.5f) == mapOf<String, Any>("23" to 500))
+    check("dual colour red", Light.dualColour(d, Hsv(0f, 1f, 1f)) == mapOf<String, Any>("24" to "000003e803e8"))
+    check("not dual when mode present", Light.detectDual(v + ("21" to "white"), "", "") == null)
+    check("not dual without colour", Light.detectDual(mapOf("22" to 5, "23" to 5), "", "") == null)
+    check("not dual with non-hex colour", Light.detectDual(v + ("24" to "zzzzzzzzzzzz"), "", "") == null)
+    println("DUAL PASSED")
 }
