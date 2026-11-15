@@ -13,11 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import sk.domov.ovladanie.tuya.TuyaDevice
-import java.io.IOException
 
-class HomeViewModel(app: Application) : AndroidViewModel(app) {
+class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
     private val store = DeviceStore(app)
     private val cm = app.getSystemService(ConnectivityManager::class.java)
 
@@ -56,7 +53,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------ zoznam zariadení
 
-    fun addOrUpdate(device: Device) {
+    /** Uloží nové alebo upravené zariadenie. [reload] = hneď znova načítať jeho stav. */
+    fun addOrUpdate(device: Device, reload: Boolean = true) {
         val list = _devices.value
         _devices.value = if (list.any { it.id == device.id }) {
             list.map { if (it.id == device.id) device else it }
@@ -64,7 +62,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             list + device
         }
         store.save(_devices.value)
-        refresh(device)
+        DomovWidgetProvider.redrawAll(app)
+        if (reload) refresh(device)
     }
 
     fun importDevices(imported: List<Device>) {
@@ -93,6 +92,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         _devices.value = _devices.value.filterNot { it.id == device.id }
         _states.value = _states.value - device.id
         store.save(_devices.value)
+        StateCache.remove(app, device.id)
+        DomovWidgetProvider.redrawAll(app)
     }
 
     // ------------------------------------------------------------ komunikácia
@@ -102,70 +103,50 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refresh(device: Device) {
-        if (_wifi.value == null) return // bez WiFi nemá zmysel pripájať sa
+        val network = _wifi.value ?: return // bez WiFi nemá zmysel pripájať sa
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { readState(device) } }
-            setState(device.id, result.toState())
+            val result = withContext(Dispatchers.IO) { runCatching { DeviceClient.readState(network, device) } }
+            apply(device, result)
         }
     }
 
     /** Nastaví jednu hodnotu (Boolean, číslo alebo text) a potom znova načíta stav zariadenia. */
-    fun setValue(device: Device, dp: String, value: Any) {
+    fun setValue(device: Device, dp: String, value: Any) = setValues(device, mapOf(dp to value))
+
+    /** Nastaví viac hodnôt naraz (napr. režim aj farbu svetla) a potom znova načíta stav zariadenia. */
+    fun setValues(device: Device, values: Map<String, Any>) {
+        if (values.isEmpty()) return
+        val network = _wifi.value ?: return
         val current = (_states.value[device.id] as? DeviceState.Online)?.values ?: emptyMap()
-        setState(device.id, DeviceState.Online(current + (dp to value))) // okamžitá odozva v UI
+        apply(device, Result.success(current + values)) // okamžitá odozva v UI
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    client(device).setDps(JSONObject().put(dp, value).toString())
+                    DeviceClient.setValues(network, device, values)
                     delay(400) // zariadenie potrebuje chvíľu, kým zmenu premietne do stavu
-                    readState(device)
+                    DeviceClient.readState(network, device)
                 }
             }
-            setState(device.id, result.toState())
+            apply(device, result)
         }
     }
 
-    private fun Result<Map<String, Any>>.toState(): DeviceState =
-        fold(
-            onSuccess = { DeviceState.Online(it) },
-            onFailure = { DeviceState.Error(describe(it)) },
+    /** Zapíše výsledok do stavu appky, do cache pre widgety a prekreslí widgety. */
+    private fun apply(device: Device, result: Result<Map<String, Any>>) {
+        result.onSuccess {
+            StateCache.save(app, device.id, it)
+            DomovWidgetProvider.redrawAll(app)
+        }
+        setState(
+            device.id,
+            result.fold(
+                onSuccess = { DeviceState.Online(it) },
+                onFailure = { DeviceState.Error(DeviceClient.describe(it)) },
+            ),
         )
-
-    private fun client(d: Device): TuyaDevice {
-        val network = _wifi.value ?: throw IOException("Nie si pripojený na WiFi")
-        // Sockety viažeme priamo na WiFi sieť, aby sa nepoužilo mobilné dáta ani keď WiFi nemá internet.
-        return TuyaDevice(d.ip, d.devId, d.localKey, d.version, network.socketFactory)
-    }
-
-    /** Načíta všetky hodnoty (DP) zariadenia, zoradené podľa čísla DP. */
-    private fun readState(d: Device): Map<String, Any> {
-        if (d.ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
-        val text = client(d).query()
-        if (text.isBlank()) throw IOException("Zariadenie neposlalo žiadne dáta")
-        val json = try {
-            JSONObject(text)
-        } catch (e: Exception) {
-            throw IOException("Neočakávaná odpoveď zariadenia: $text")
-        }
-        val dps = json.optJSONObject("dps")
-            ?: json.optJSONObject("data")?.optJSONObject("dps")
-            ?: throw IOException("Neočakávaná odpoveď zariadenia: $text")
-        val out = HashMap<String, Any>()
-        for (key in dps.keys()) {
-            val v = dps.get(key)
-            if (v is Boolean || v is Number || v is String) out[key] = v
-        }
-        return out.toSortedMap(compareBy<String>({ it.toIntOrNull() ?: Int.MAX_VALUE }, { it }))
     }
 
     private fun setState(id: String, state: DeviceState) {
         _states.value = _states.value + (id to state)
-    }
-
-    private fun describe(t: Throwable): String = when (t) {
-        is java.net.SocketTimeoutException -> "Zariadenie neodpovedá (skontroluj IP adresu a či je zapnuté)"
-        is java.net.ConnectException -> "Nedá sa pripojiť (skontroluj IP adresu)"
-        is IllegalArgumentException -> t.message ?: "Neplatné nastavenia zariadenia"
-        else -> t.message ?: t.javaClass.simpleName
     }
 }

@@ -3,18 +3,25 @@
 package sk.domov.ovladanie
 
 import android.os.Build
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,7 +35,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -45,10 +51,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 
@@ -72,47 +81,60 @@ fun HomeScreen(vm: HomeViewModel) {
     val wifi by vm.wifi.collectAsState()
     val wifiOn = wifi != null
 
-    var editing by remember { mutableStateOf<Device?>(null) }
+    var openId by rememberSaveable { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Domov") },
-                actions = {
-                    TextButton(onClick = { showImport = true }) { Text("Import") }
-                    IconButton(onClick = { vm.refreshAll() }, enabled = wifiOn) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Obnoviť")
-                    }
-                },
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showAdd = true }) {
-                Icon(Icons.Default.Add, contentDescription = "Pridať zariadenie")
-            }
-        },
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            if (!wifiOn) {
-                item { WifiBanner() }
-            }
-            if (devices.isEmpty()) {
-                item { EmptyHint() }
-            }
-            items(devices, key = { it.id }) { device ->
-                DeviceCard(
-                    device = device,
-                    state = states[device.id] ?: DeviceState.Loading,
-                    wifiOn = wifiOn,
-                    onSet = { dp, value -> vm.setValue(device, dp, value) },
-                    onEdit = { editing = device },
+    val open = devices.find { it.id == openId }
+    BackHandler(enabled = open != null) { openId = null }
+
+    if (open != null) {
+        DeviceScreen(
+            device = open,
+            state = states[open.id] ?: DeviceState.Loading,
+            wifiOn = wifiOn,
+            vm = vm,
+            onBack = { openId = null },
+        )
+    } else {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Domov") },
+                    actions = {
+                        TextButton(onClick = { showImport = true }) { Text("Import") }
+                        IconButton(onClick = { vm.refreshAll() }, enabled = wifiOn) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Obnoviť")
+                        }
+                    },
                 )
+            },
+            floatingActionButton = {
+                FloatingActionButton(onClick = { showAdd = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Pridať zariadenie")
+                }
+            },
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (!wifiOn) {
+                    item { WifiBanner() }
+                }
+                if (devices.isEmpty()) {
+                    item { EmptyHint() }
+                }
+                items(devices, key = { it.id }) { device ->
+                    DeviceTile(
+                        device = device,
+                        state = states[device.id] ?: DeviceState.Loading,
+                        wifiOn = wifiOn,
+                        onOpen = { openId = device.id },
+                        onTogglePower = { dp, on -> vm.setValues(device, mapOf(dp to on)) },
+                    )
+                }
             }
         }
     }
@@ -125,14 +147,6 @@ fun HomeScreen(vm: HomeViewModel) {
             onDelete = null,
         )
     }
-    editing?.let { current ->
-        DeviceDialog(
-            device = current,
-            onDismiss = { editing = null },
-            onSave = { vm.addOrUpdate(it); editing = null },
-            onDelete = { vm.remove(current); editing = null },
-        )
-    }
     if (showImport) {
         ImportDialog(
             onDismiss = { showImport = false },
@@ -142,7 +156,7 @@ fun HomeScreen(vm: HomeViewModel) {
 }
 
 @Composable
-private fun WifiBanner() {
+internal fun WifiBanner() {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
@@ -164,113 +178,86 @@ private fun EmptyHint() {
     )
 }
 
-@Composable
-private fun DeviceCard(
-    device: Device,
-    state: DeviceState,
-    wifiOn: Boolean,
-    onSet: (String, Any) -> Unit,
-    onEdit: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(device.name, style = MaterialTheme.typography.titleMedium)
-                    val isError = state is DeviceState.Error
-                    Text(
-                        text = when (state) {
-                            is DeviceState.Loading -> "Pripájam sa…"
-                            is DeviceState.Online -> "Pripojené"
-                            is DeviceState.Error -> state.message
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isError) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                TextButton(onClick = onEdit) { Text("Upraviť") }
-            }
-            when (state) {
-                is DeviceState.Loading -> LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                )
-                is DeviceState.Online -> {
-                    val shown = state.values.filterKeys { it !in device.hidden }
-                    if (shown.isEmpty()) {
-                        Text(
-                            text = "Zariadenie nevrátilo žiadne hodnoty na zobrazenie.",
-                            modifier = Modifier.padding(top = 8.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    shown.forEach { (dp, value) ->
-                        DpRow(
-                            label = device.labels[dp] ?: "Hodnota $dp",
-                            value = value,
-                            enabled = wifiOn,
-                            onSet = { onSet(dp, it) },
-                        )
-                    }
-                }
-                is DeviceState.Error -> Unit
-            }
+/** Krátky popis stavu zariadenia, napr. "Zapnuté · Biela 80 %". */
+internal fun statusText(device: Device, state: DeviceState): String = when (state) {
+    is DeviceState.Loading -> "Pripájam sa…"
+    is DeviceState.Error -> "Nedostupné – ťukni pre podrobnosti"
+    is DeviceState.Online -> {
+        val spec = Light.detect(state.values)
+        val power = powerDpOf(device, state.values)
+        when {
+            spec != null -> Light.summary(spec, state.values)
+            power == null -> "Pripojené"
+            power != null && state.values[power] == true -> "Zapnuté"
+            else -> "Vypnuté"
         }
     }
 }
 
-/** Jeden riadok = jedna hodnota zariadenia. Boolean je vypínač, číslo a text sa menia cez dialóg. */
+/** Kruhová ikona zariadenia: žiarovka pre svetlá, inak symbol vypínača. */
 @Composable
-private fun DpRow(label: String, value: Any, enabled: Boolean, onSet: (Any) -> Unit) {
-    var editing by remember { mutableStateOf(false) }
-    val text = value.toString()
-    val editable = value is Number || (value is String && text.length <= 40)
-
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+internal fun DeviceIcon(isLight: Boolean, on: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface),
+        contentAlignment = Alignment.Center,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label)
-            if (value !is Boolean) {
-                Text(
-                    text = if (text.length > 40) text.take(40) + "…" else text,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (value is Boolean) {
-            Switch(checked = value, onCheckedChange = { onSet(it) }, enabled = enabled)
-        } else if (editable) {
-            TextButton(onClick = { editing = true }, enabled = enabled) { Text("Zmeniť") }
-        }
-    }
-
-    if (editing) {
-        ValueDialog(
-            title = label,
-            initial = text,
-            numeric = value is Number,
-            onDismiss = { editing = false },
-            onConfirm = { input ->
-                val parsed: Any? = when (value) {
-                    is Double, is Float -> input.toDoubleOrNull()
-                    is Number -> input.toLongOrNull()
-                    else -> input
-                }
-                if (parsed != null) onSet(parsed)
-                editing = false
-            },
+        Icon(
+            painter = painterResource(if (isLight) R.drawable.ic_bulb else R.drawable.ic_power),
+            contentDescription = null,
+            modifier = Modifier.size(26.dp),
+            tint = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
+/** Jedna dlaždica na domovskej obrazovke: ikona, názov, stav a hlavný vypínač. */
 @Composable
-private fun ValueDialog(
+private fun DeviceTile(
+    device: Device,
+    state: DeviceState,
+    wifiOn: Boolean,
+    onOpen: () -> Unit,
+    onTogglePower: (String, Boolean) -> Unit,
+) {
+    val values = (state as? DeviceState.Online)?.values
+    val power = if (values != null) powerDpOf(device, values) else null
+    val on = power != null && values?.get(power) == true
+    val isLight = values != null && Light.detect(values) != null
+    val container = if (on) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+
+    Card(
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = container),
+    ) {
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            DeviceIcon(isLight = isLight, on = on)
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(device.name, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = statusText(device, state),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (state is DeviceState.Error) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (power != null) {
+                Switch(checked = on, onCheckedChange = { onTogglePower(power, it) }, enabled = wifiOn)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ValueDialog(
     title: String,
     initial: String,
     numeric: Boolean,
+    confirmText: String = "Nastaviť",
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
@@ -289,13 +276,13 @@ private fun ValueDialog(
                 modifier = Modifier.fillMaxWidth(),
             )
         },
-        confirmButton = { TextButton(onClick = { onConfirm(text.trim()) }) { Text("Nastaviť") } },
+        confirmButton = { TextButton(onClick = { onConfirm(text.trim()) }) { Text(confirmText) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
     )
 }
 
 @Composable
-private fun DeviceDialog(
+internal fun DeviceDialog(
     device: Device?,
     onDismiss: () -> Unit,
     onSave: (Device) -> Unit,
@@ -306,6 +293,7 @@ private fun DeviceDialog(
     var devId by remember { mutableStateOf(device?.devId ?: "") }
     var key by remember { mutableStateOf(device?.localKey ?: "") }
     var version by remember { mutableStateOf(device?.version ?: "3.3") }
+    var powerDp by remember { mutableStateOf(device?.powerDp ?: "") }
     var labels by remember { mutableStateOf(labelsToText(device?.labels ?: emptyMap())) }
     var hidden by remember { mutableStateOf(device?.hidden?.joinToString(", ") ?: "") }
 
@@ -313,7 +301,7 @@ private fun DeviceDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (device == null) "Nové zariadenie" else "Upraviť zariadenie") },
+        title = { Text(if (device == null) "Nové zariadenie" else "Nastavenia zariadenia") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -343,6 +331,12 @@ private fun DeviceDialog(
                         FilterChip(selected = version == v, onClick = { version = v }, label = { Text(v) })
                     }
                 }
+                Text("Pokročilé", style = MaterialTheme.typography.labelMedium)
+                OutlinedTextField(
+                    value = powerDp, onValueChange = { powerDp = it },
+                    label = { Text("Hlavný vypínač: číslo hodnoty (nepovinné)") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 OutlinedTextField(
                     value = labels, onValueChange = { labels = it },
                     label = { Text("Názvy hodnôt (napr. 20=Svetlo, 22=Jas)") },
@@ -350,7 +344,7 @@ private fun DeviceDialog(
                 )
                 OutlinedTextField(
                     value = hidden, onValueChange = { hidden = it },
-                    label = { Text("Skryť hodnoty (čísla, napr. 25, 26)") }, singleLine = true,
+                    label = { Text("Skryté hodnoty (čísla, napr. 25, 26)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -367,6 +361,7 @@ private fun DeviceDialog(
                             devId = devId.trim(),
                             localKey = key.trim(),
                             version = version,
+                            powerDp = powerDp.trim(),
                             labels = parseLabels(labels),
                             hidden = parseHidden(hidden),
                         )

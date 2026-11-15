@@ -12,8 +12,19 @@ android {
         applicationId = "sk.domov.ovladanie"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // Pevný ladiaci kľúč: každý build má rovnaký podpis, takže sa nová verzia dá nainštalovať
+    // priamo cez starú (inak by ju Android odmietol, lebo GitHub vytvára nový kľúč pri každom builde).
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

@@ -17,6 +17,8 @@ data class Device(
     val labels: Map<String, String> = emptyMap(),
     /** Čísla DP, ktoré sa nemajú zobrazovať. */
     val hidden: Set<String> = emptySet(),
+    /** Číslo hodnoty (DP), ktorá je hlavný vypínač. Prázdne = nájde sa automaticky. */
+    val powerDp: String = "",
 )
 
 sealed interface DeviceState {
@@ -60,6 +62,7 @@ class DeviceStore(context: Context) {
                     version = o.optString("version", "3.3"),
                     labels = labels,
                     hidden = hidden,
+                    powerDp = o.optString("powerDp", ""),
                 )
             }
         } catch (e: Exception) {
@@ -82,10 +85,21 @@ class DeviceStore(context: Context) {
                     .put("version", d.version)
                     .put("labels", labels)
                     .put("hidden", JSONArray(d.hidden.toList()))
+                    .put("powerDp", d.powerDp)
             )
         }
         prefs.edit().putString("devices", arr.toString()).apply()
     }
+}
+
+/**
+ * Ktorá hodnota je hlavný vypínač: ručne nastavená, inak vypínač svetla,
+ * inak prvá hodnota typu zapnuté/vypnuté. Vráti null, ak zariadenie žiadnu takú nemá.
+ */
+fun powerDpOf(device: Device, values: Map<String, Any>): String? {
+    if (device.powerDp.isNotBlank() && values[device.powerDp] is Boolean) return device.powerDp
+    Light.detect(values)?.let { return it.power }
+    return values.entries.firstOrNull { it.value is Boolean }?.key
 }
 
 /** "20=Svetlo, 22=Jas" -> {20: Svetlo, 22: Jas} */

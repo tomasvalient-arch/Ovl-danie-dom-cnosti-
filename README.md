@@ -2,7 +2,13 @@
 
 Android appka, ktorá ovláda tvoje Tuya zariadenia **priamo cez domácu WiFi** (lokálny protokol, TCP port 6668). Nepotrebuje Tuya cloud ani Tuya appku. Mimo domácej WiFi nefunguje a appka to zobrazí upozornením.
 
-Pri každom zariadení si appka sama načíta **všetky jeho hodnoty** a ku každej ukáže vhodný ovládací prvok: vypínač (zapnuté/vypnuté), alebo hodnotu s tlačidlom „Zmeniť“ (jas, teplota, čas, režim). Podporuje protokoly **3.3, 3.4 a 3.5**.
+Domovská obrazovka ukazuje každé zariadenie ako dlaždicu s vypínačom a stavom. Ťuknutím na dlaždicu sa otvorí detail:
+
+- **Svetlá** (LED pás, žiarovka) sa spoznajú automaticky a majú ovládanie ako v Tuya appke: veľký vypínač, prepínač **Biela / Farba**, jas, teplota bielej a výber farby.
+- **Ostatné zariadenia** (napr. fritéza) ukážu zoznam všetkých hodnôt: vypínač, alebo hodnotu s tlačidlom „Zmeniť“. Hodnoty si môžeš premenovať, skryť alebo jednu nastaviť ako hlavný vypínač (cez ⋮ pri hodnote).
+- **Widgety na plochu**: jedno ťuknutie zapne alebo vypne zariadenie (pozri nižšie).
+
+Podporuje protokoly **3.3, 3.4 a 3.5**.
 
 ## 1. Ako získať APK
 
@@ -29,16 +35,26 @@ Zariadenia sa lokálne ovládajú pomocou *local key*, ktorý pozná len Tuya cl
 ## 3. Použitie
 
 - Každé zariadenie má IP adresu, Device ID, local key a verziu protokolu. Keď zariadenie neodpovedá, skús inú verziu (3.3, 3.4, 3.5).
-- Hodnoty sa zobrazia ako „Hodnota 20“, „Hodnota 22“ a pod. Číslo je interné označenie (DP). Skús ich meniť a uvidíš, čo ktorá robí. Potom ich môžeš pomenovať v **Upraviť → Názvy hodnôt**, napr. `20=Svetlo, 22=Jas`.
-- Hodnoty, ktoré nepotrebuješ (časovače, dlhé kódy scén), skryješ v **Upraviť → Skryť hodnoty**, napr. `25, 26`.
+- Pri zariadeniach, ktoré appka nepozná ako svetlo, sa hodnoty zobrazia ako „Hodnota 20“, „Hodnota 22“ a pod. Číslo je interné označenie (DP). Skús ich meniť a uvidíš, čo ktorá robí. Potom ich cez ⋮ pri hodnote **premenuješ**, alebo **skryješ**. (Dá sa to aj hromadne v nastaveniach zariadenia, ozubené koliesko hore.)
+- **Hlavný vypínač** je hodnota, ktorú ovláda veľké tlačidlo, prepínač na dlaždici a widget. Pri svetle sa nájde sám, pri ostatných zariadeniach je to prvá hodnota typu zapnuté/vypnuté. Ak to nie je tá správna, nastav ju cez ⋮ → „Nastaviť ako hlavný vypínač“.
 - IP adresu nájdeš v routeri v zozname pripojených zariadení, alebo v Tuya appke v nastaveniach zariadenia (informácie o zariadení). V routeri ju nastav ako **pevnú (DHCP rezervácia)**, inak sa môže zmeniť.
 - Local key sa zmení, ak zariadenie znova spáruješ. Vtedy ho treba vytiahnuť nanovo.
 - Appka posiela spojenia priamo cez WiFi, takže funguje aj keď má WiFi sieť bez internetu.
 
+## 4. Widgety na plochu
+
+1. Podrž prst na prázdnom mieste plochy, vyber **Widgety** a nájdi **Domov**. Pridaj widget **Domov – zariadenie**.
+2. Appka sa opýta, ktoré zariadenie widget ovláda. Vyber ho.
+3. Ťuknutím na widget sa zariadenie zapne alebo vypne. Žltá dlaždica = zapnuté, tmavá = vypnuté. Na každé zariadenie môžeš dať aj viac widgetov.
+
+Widget si stav obnovuje pri ťuknutí a približne každých 30 minút. Ak zariadenie prepneš fyzickým tlačidlom, widget to môže ukázať s oneskorením. Ťuknutie ale vždy najprv zistí skutočný stav a prepne na opačný. Mimo domácej WiFi ukáže „Bez WiFi“.
+
+Pozor pri spotrebičoch (fritéza): widget prepína hlavný vypínač. Zapnutie nemusí spustiť varenie, ale skontroluj si na zariadení, čo sa po zapnutí deje.
+
 ## Limity
 
 - Zariadenia pripojené cez Zigbee/Bluetooth bránu nie sú podporované (komunikujú cez bránu iným spôsobom).
-- Farby a scény sa ukladajú ako dlhý kód, ktorý appka nevie pohodlne upraviť (zobrazí sa len na čítanie). Zapnutie, jas, teplota, časy a režimy fungujú.
+- Svetlá: biela (jas, teplota) a farba fungujú. Hotové **scény a hudobný režim** appka zatiaľ nenastavuje (kód scén je dlhý a výrobca od výrobcu iný). Zobrazia sa len v „Ďalšie hodnoty“ na čítanie.
 - Názvy hodnôt (napr. „Jas“) appka nepozná, lebo lokálny protokol posiela len čísla. Pomenuješ si ich sám.
 - Local keys sú uložené v súkromnom úložisku appky (bez zálohovania do cloudu).
 - Chceš byť úplne nezávislý od cloudu? V routeri zablokuj zariadeniam prístup na internet. Lokálne ovládanie by malo ďalej fungovať.
@@ -46,6 +62,8 @@ Zariadenia sa lokálne ovládajú pomocou *local key*, ktorý pozná len Tuya cl
 ## Pre vývojárov
 
 - `app/src/main/java/sk/domov/ovladanie/tuya/TuyaDevice.java` – protokol (3.3 AES-ECB + CRC, 3.4 HMAC + session key, 3.5 AES-GCM).
+- `app/src/main/java/sk/domov/ovladanie/Light.kt` – logika svetiel (rozpoznanie, jas, teplota, farba). Test: `tools/LightTest.kt` (spúšťa sa Kotlin kompilátorom, bez Androidu).
+- `DomovWidgetProvider.kt` + `WidgetConfigActivity.kt` – widgety na plochu.
 - `tools/MockTest.java` – test proti simulovanému zariadeniu, spustíš ho bez Androidu:
   ```
   javac -d out app/src/main/java/sk/domov/ovladanie/tuya/TuyaDevice.java tools/MockTest.java
