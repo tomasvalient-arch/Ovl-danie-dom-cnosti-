@@ -19,7 +19,6 @@ jobs:
           distribution: temurin
           java-version: 17
 
-     
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Zostaviť debug APK
