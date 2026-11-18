@@ -408,3 +408,12 @@ V **Technickom info** zariadenia pribudla sekcia „Príkazy z appky, automatiky
 ### Oprava 1.29.2
 - Farebné koliesko (aj rýchle farby cez ťuknutie na koliesko) používalo staré údaje o svetle z čias, keď sa zobrazilo: po vypnutí hlavného svetla a zmene farby podhľadu poslalo „hlavné svieti“ a rozsvietilo ho. Teraz berie vždy aktuálny stav.
 - Po príkaze sa stav v appke 1,5 s nenechá prepísať starým hlásením pomalého svetla.
+
+## 21. Nákupný zoznam (od verzie 1.30)
+Na Domove je pod scénami tenký riadok **Nákup** (koľko zostáva kúpiť). Ťuknutím sa otvorí jedna obrazovka:
+- Hore pole „Čo treba kúpiť?“ a tlačidlo +. Množstvo sa píše rovno do názvu („Mlieko 2 l“). Po potvrdení ostane klávesnica, takže sa dá pridať viac vecí za sebou.
+- Pod ním plochý zoznam, najnovšie hore. Ťuknutím na riadok sa položka odškrtne: preškrtne sa, zosivie a presunie dole. Ťuknutím sa vráti späť.
+- „Vymazať kúpené“ hore vpravo (je vidno len keď je niečo odškrtnuté). Preklepnutú položku odstrániš tak, že ju odškrtneš a vymažeš kúpené.
+- Keď napíšeš položku, ktorá už v zozname je, nezduplikuje sa; ak je kúpená, vráti sa medzi nekúpené.
+- Zoznam sa ukladá len v tomto telefóne (`ShoppingAndroid.kt`, súbor `domov_shopping`) a je súčasťou zálohy. Zdieľanie s ďalším telefónom zatiaľ nie je.
+- Kód: `Shopping.kt` (logika bez Androidu), `ShoppingAndroid.kt` (uloženie), `ShoppingUi.kt` (riadok na Domove a obrazovka). Test: `tools/ShoppingTest.kt`.

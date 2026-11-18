@@ -137,6 +137,7 @@ fun HomeScreen(vm: HomeViewModel) {
             "share" -> ShareAppScreen(vm = vm, onBack = { pages.removeAt(pages.size - 1) })
             "join" -> JoinHouseholdScreen(vm = vm, onBack = { pages.removeAt(pages.size - 1) })
             "night" -> NightSceneScreen(vm = vm, onBack = { pages.removeAt(pages.size - 1) })
+            "shopping" -> ShoppingScreen(onBack = { pages.removeAt(pages.size - 1) })
             "backup" -> BackupScreen(onBack = { pages.removeAt(pages.size - 1) })
             "weather" -> WeatherSettingsScreen(vm.weather, onBack = { pages.removeAt(pages.size - 1) })
             "heat-login" -> HeatLoginScreen(

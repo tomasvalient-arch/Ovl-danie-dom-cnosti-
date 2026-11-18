@@ -62,4 +62,7 @@ java -jar "$OUT/moon.jar"
 # meniny: kalendár 366 dní, formát dátumu
 kotlinc $S/Meniny.kt tools/MeninyTest.kt -include-runtime -d "$OUT/meniny.jar" 2>/dev/null
 java -jar "$OUT/meniny.jar"
+# nákupný zoznam
+kotlinc -cp "$JSON" $S/Shopping.kt tools/ShoppingTest.kt -include-runtime -d "$OUT/shopping.jar" 2>/dev/null
+java -cp "$OUT/shopping.jar:$JSON" ShoppingTestKt
 echo "VŠETKY TESTY PREŠLI"

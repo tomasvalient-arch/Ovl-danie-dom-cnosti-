@@ -139,6 +139,8 @@ internal fun HomeMain(
     val status = remember(pagesOpen, tick) { PresenceStore.status(context) }
     val members = remember(pagesOpen, tick) { HouseholdStore.members(context) }
     val selfName = remember(pagesOpen) { HouseholdStore.customName(context) ?: "ty" }
+    // nákupný zoznam: znova sa načíta po návrate z obrazovky Nákup
+    val shopItems = remember(pagesOpen, tick) { ShoppingStore.items(context) }
 
     fun values(d: Device): Map<String, Any> = deviceValues(d, states, known)
 
@@ -232,6 +234,9 @@ internal fun HomeMain(
                     ScenePill(Sym.bedtime, "Noc", highlighted = false) { confirmNight = true }
                     ScenePill(Sym.powerSettingsNew, "Všetko vypnúť", highlighted = false) { confirmAllOff = true }
                 }
+            }
+            item(span = { GridItemSpan(maxLineSpan) }, key = "shop") {
+                ShoppingRow(items = shopItems, onClick = { onPage("shopping") })
             }
 
             if (devices.isEmpty()) {
