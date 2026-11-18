@@ -232,6 +232,38 @@ object Events {
         return "Najbližšia: " + inText(daysUntil(next, today) ?: 0)
     }
 
+    // ------------------------------------------------------------------ plán upozornení (náhľad v dialógu)
+
+    /** Kedy upozornenia skutočne prídu ([upcoming]: za koľko dní vopred a v ktorý deň) a ktoré už prešli ([skipped]). */
+    data class ReminderPlan(val upcoming: List<Pair<Int, LocalDate>>, val skipped: List<Int>)
+
+    fun plan(e: EventItem, now: LocalDateTime, time: LocalTime): ReminderPlan {
+        val offs = e.offsets.distinct().sortedDescending()
+        val occ = occurrence(e, now.toLocalDate()) ?: return ReminderPlan(emptyList(), offs)
+        val up = ArrayList<Pair<Int, LocalDate>>()
+        val skipped = ArrayList<Int>()
+        for (off in offs) {
+            val trigger = occ.minusDays(off.toLong())
+            if (isDue(trigger, now, time)) skipped += off else up += off to trigger
+        }
+        return ReminderPlan(up, skipped)
+    }
+
+    /** „v ten deň“, „1 týždeň vopred“, „3 dni vopred“. */
+    fun offsetPhrase(off: Int): String = if (off == 0) "v ten deň" else offsetLabel(off).lowercase() + " vopred"
+
+    /** Riadky pod voľbami v dialógu: „Príde o 8:00: 18. novembra (1 týždeň vopred), …“ a „Už prešlo: …“. */
+    fun planLines(p: ReminderPlan, time: LocalTime): List<String> {
+        val clock = String.format(java.util.Locale.ROOT, "%d:%02d", time.hour, time.minute)
+        val lines = ArrayList<String>()
+        if (p.upcoming.isNotEmpty()) {
+            lines += "Príde o $clock: " + p.upcoming.joinToString(", ") { dateText(it.second) + " (" + offsetPhrase(it.first) + ")" }
+        }
+        if (p.skipped.isNotEmpty()) lines += "Už prešlo, nepríde: " + p.skipped.joinToString(", ") { offsetPhrase(it) }
+        if (lines.isEmpty()) lines += "Bez upozornenia – nepríde nič."
+        return lines
+    }
+
     // ------------------------------------------------------------------ uloženie
 
     fun toJson(events: List<EventItem>): String {

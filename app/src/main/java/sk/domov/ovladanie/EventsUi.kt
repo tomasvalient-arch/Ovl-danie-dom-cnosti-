@@ -59,10 +59,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 private fun notificationsOn(c: Context): Boolean = NotificationManagerCompat.from(c).areNotificationsEnabled()
+
+private fun startOfDayMillis(d: LocalDate): Long = d.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
 private fun clockText(minutes: Int): String = String.format(java.util.Locale.ROOT, "%d:%02d", minutes / 60, minutes % 60)
 
@@ -264,46 +268,95 @@ private fun EventListRow(e: EventItem, today: LocalDate, onClick: () -> Unit) {
     }
 }
 
-/** Pridanie a úprava: druh, názov, dátum, opakovanie a kedy vopred upozorniť. */
+/**
+ * Pridanie a úprava: druh, názov, dátum, opakovanie a kedy vopred upozorniť.
+ * Dátum sa skladá zo dňa a mesiaca ([month], [day]) a roku, ktorý má význam len keď sa používa: rok jednorazovej udalosti
+ * ([eventYear]) alebo rok narodenia ([birthYear], len keď je zaškrtnuté „Poznám rok narodenia“). Appka nikdy nevymyslí
+ * rok narodenia za teba: kým ho nevyberieš, uložiť sa nedá. Pod dátumom a voľbami vidno, čo sa naozaj stane.
+ */
 @Composable
 private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDelete: (() -> Unit)?, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val scheme = MaterialTheme.colorScheme
     val today = remember { LocalDate.now() }
+    val timeOfDay = remember { EventsStore.timeOfDay(context) }
     var birthday by remember { mutableStateOf(initial?.birthday ?: false) }
     var name by remember { mutableStateOf(initial?.name ?: "") }
-    var date by remember {
-        mutableStateOf(
-            if (initial == null) today
-            else Events.safeDate(if (initial.year > 0) initial.year else today.year, initial.month, initial.day),
-        )
+    var month by remember { mutableIntStateOf(initial?.month ?: today.monthValue) }
+    var day by remember { mutableIntStateOf(initial?.day ?: today.dayOfMonth) }
+    var eventYear by remember {
+        mutableIntStateOf(if (initial != null && !initial.birthday && !initial.yearly && initial.year > 0) initial.year else today.year)
     }
+    var birthYear by remember { mutableStateOf(initial?.takeIf { it.birthday && it.year > 0 }?.year) }
     var knowsYear by remember { mutableStateOf(initial != null && initial.birthday && initial.year > 0) }
     var yearly by remember { mutableStateOf(initial?.yearly ?: false) }
     var offsets by remember { mutableStateOf(initial?.offsets?.filter { it in Events.PRESETS }?.toSet() ?: setOf(7, 0)) }
     var custom by remember { mutableStateOf(initial?.offsets?.firstOrNull { it !in Events.PRESETS }?.toString() ?: "") }
     var confirmDelete by remember { mutableStateOf(false) }
 
+    val oneTime = !birthday && !yearly
+    val needsBirthYear = birthday && knowsYear && birthYear == null
+
     fun build(): EventItem {
         val extra = custom.toIntOrNull()?.takeIf { it in 0..Events.MAX_OFFSET }
-        val all = (offsets + listOfNotNull(extra)).distinct().sortedDescending()
-        val year = when {
-            birthday -> if (knowsYear) date.year else 0
-            yearly -> 0
-            else -> date.year
-        }
         return EventItem(
             id = initial?.id ?: UUID.randomUUID().toString(),
             name = Events.clean(name),
             birthday = birthday,
-            year = year,
-            month = date.monthValue,
-            day = date.dayOfMonth,
+            year = when {
+                birthday -> if (knowsYear) (birthYear ?: 0) else 0
+                yearly -> 0
+                else -> eventYear
+            },
+            month = month,
+            day = day,
             yearly = birthday || yearly,
-            offsets = all,
+            offsets = (offsets + listOfNotNull(extra)).distinct().sortedDescending(),
         )
     }
 
-    val showYear = if (birthday) knowsYear else !yearly
+    /** Rok, ktorý sa pri dátume zobrazí a s ktorým sa otvorí výber. */
+    fun shownYear(): Int = when {
+        birthday && knowsYear -> birthYear ?: (today.year - 30)
+        oneTime -> eventYear
+        else -> today.year
+    }
+
+    fun applyPicked(y: Int, m: Int, d: Int) {
+        month = m
+        day = d
+        if (birthday && knowsYear) birthYear = y
+        if (oneTime) eventYear = y
+    }
+
+    fun pickDate() {
+        val start = Events.safeDate(shownYear(), month, day)
+        val dlg = DatePickerDialog(
+            context,
+            { _, y, m, d -> applyPicked(y, m + 1, d) },
+            start.year, start.monthValue - 1, start.dayOfMonth,
+        )
+        // narodený sa môže človek najneskôr dnes; jednorazová udalosť nemôže byť v minulosti
+        if (birthday && knowsYear) dlg.datePicker.maxDate = startOfDayMillis(today)
+        if (oneTime) dlg.datePicker.minDate = startOfDayMillis(today)
+        dlg.show()
+    }
+
+    val built = build()
+    val shown = Events.safeDate(shownYear(), month, day)
+    val pastOneTime = oneTime && shown.isBefore(today)
+    val dateTitle = when {
+        birthday && knowsYear -> "Dátum narodenia"
+        birthday -> "Narodeniny (deň a mesiac)"
+        else -> "Dátum"
+    }
+    val dateValue = when {
+        needsBirthYear -> "Vyber rok"
+        birthday && knowsYear -> Events.dateText(shown, year = true)
+        oneTime -> Events.dateText(shown, year = true)
+        else -> Events.dateText(shown)
+    }
+    val canSave = name.isNotBlank() && !needsBirthYear && !pastOneTime
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -322,21 +375,20 @@ private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDele
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                SettingRow(
-                    Sym.calendarToday, "Dátum",
-                    value = Events.dateText(date, year = showYear),
-                    onClick = {
-                        DatePickerDialog(
-                            context,
-                            { _, y, m, d -> date = LocalDate.of(y, m + 1, d) },
-                            date.year, date.monthValue - 1, date.dayOfMonth,
-                        ).show()
-                    },
-                )
                 if (birthday) {
-                    CheckRow(title = "Poznám rok narodenia", caption = "Upozornenie potom napíše, koľko rokov bude mať", checked = knowsYear) { knowsYear = it }
+                    CheckRow(title = "Poznám rok narodenia", caption = "Upozornenie potom napíše, koľko rokov bude mať", checked = knowsYear) {
+                        knowsYear = it
+                        // rok sa vyberá hneď, aby sa nikdy neuložil vymyslený
+                        if (it && birthYear == null) pickDate()
+                    }
                 } else {
                     CheckRow(title = "Opakovať každý rok", checked = yearly) { yearly = it }
+                }
+                SettingRow(Sym.calendarToday, dateTitle, value = dateValue, onClick = { pickDate() })
+                when {
+                    needsBirthYear -> Text("Ťukni na dátum a vyber rok narodenia.", style = MaterialTheme.typography.bodySmall, color = scheme.error)
+                    pastOneTime -> Text("Tento dátum už prešiel, upozornenie by nepríšlo. Vyber budúci dátum.", style = MaterialTheme.typography.bodySmall, color = scheme.error)
+                    else -> Text(Events.dateLine(built, today), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                 }
                 Text("Upozorniť vopred", style = MaterialTheme.typography.titleSmall)
                 ChipRow {
@@ -354,14 +406,19 @@ private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDele
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (!needsBirthYear && !pastOneTime) {
+                    Events.planLines(Events.plan(built, LocalDateTime.now(), timeOfDay), timeOfDay).forEach {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                    }
+                }
                 if (onDelete != null) {
                     TextButton(onClick = { if (confirmDelete) onDelete() else confirmDelete = true }) {
-                        Text(if (confirmDelete) "Naozaj zmazať?" else "Zmazať udalosť", color = MaterialTheme.colorScheme.error)
+                        Text(if (confirmDelete) "Naozaj zmazať?" else "Zmazať udalosť", color = scheme.error)
                     }
                 }
             }
         },
-        confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { onSave(build()) }) { Text("Uložiť") } },
+        confirmButton = { TextButton(enabled = canSave, onClick = { onSave(build()) }) { Text("Uložiť") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
     )
 }

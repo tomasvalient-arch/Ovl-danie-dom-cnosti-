@@ -427,3 +427,8 @@ Na Domove je pod Nákupom riadok **Udalosti** (najbližšia udalosť a za koľko
 - Po uložení udalosti sa upozornenia, ktorých čas už prešiel, považujú za vybavené (narodeniny o 3 dni s „týždeň vopred“ nespustia hneď staré upozornenie).
 - Bez povolených upozornení v telefóne sa nič nevybaví: hore je upozornenie s tlačidlom do nastavení a po zapnutí prídu zmeškané pri najbližšej kontrole. O povolenie sa appka pýta po uložení prvej udalosti (Android 13+).
 - Ukladá sa len v telefóne (`domov_events`), udalosti a čas upozornení sú v zálohe. Kód: `Events.kt` (logika bez Androidu), `EventsAndroid.kt` (uloženie, budík, notifikácie, `EventsReceiver`), `EventsUi.kt` (riadok, zoznam, dialóg). Test: `tools/EventsTest.kt`.
+
+### Doladenie 1.31.1
+- Narodeniny: po zaškrtnutí „Poznám rok narodenia“ sa hneď otvorí výber dátumu, aby sa zvolil rok (najneskôr dnes). Kým sa rok nevyberie, uložiť sa nedá – appka rok nikdy nevymyslí. Pod dátumom je vidno riadok, ako ho zobrazí zoznam („streda 25. novembra · každý rok · bude mať 30 rokov“).
+- Jednorazová udalosť nemôže byť v minulosti (výber dátumu ju nepustí; staršiu pri úprave appka označí a nedá uložiť).
+- Pod voľbami „Upozorniť vopred“ dialóg ukáže, kedy upozornenia naozaj prídu („Príde o 8:00: 18. novembra (1 týždeň vopred), 25. novembra (v ten deň)“) a ktoré už prešli a nepríde („Už prešlo, nepríde: 1 týždeň vopred“). Logika je v `Events.plan` / `Events.planLines` (test `tools/EventsTest.kt`).

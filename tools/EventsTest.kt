@@ -102,6 +102,22 @@ fun main() {
     check("riadok na Domove: len prešlé", Events.rowText(listOf(past), today) == "Nič nadchádza")
     check("podnadpis", Events.subtitle(listOf(b), today) == "Najbližšia: o týždeň")
 
+    // plán upozornení (náhľad v dialógu)
+    val p1 = Events.plan(b, LocalDateTime.of(2026, 11, 10, 10, 0), t8)
+    check("plán: obe upozornenia prídu", p1.upcoming == listOf(7 to LocalDate.of(2026, 11, 18), 0 to LocalDate.of(2026, 11, 25)) && p1.skipped.isEmpty())
+    val p2 = Events.plan(b, LocalDateTime.of(2026, 11, 22, 10, 0), t8)
+    check("plán: týždeň vopred už prešiel", p2.upcoming == listOf(0 to LocalDate.of(2026, 11, 25)) && p2.skipped == listOf(7))
+    val p3 = Events.plan(b, LocalDateTime.of(2026, 11, 25, 9, 0), t8)
+    check("plán: v deň udalosti po čase nepríde nič", p3.upcoming.isEmpty() && p3.skipped == listOf(7, 0))
+    val p4 = Events.plan(past, LocalDateTime.of(2026, 11, 18, 9, 0), t8)
+    check("plán: jednorazová v minulosti", p4.upcoming.isEmpty() && p4.skipped == listOf(7))
+    check("text plánu", Events.planLines(p1, t8) == listOf("Príde o 8:00: 18. novembra (1 týždeň vopred), 25. novembra (v ten deň)"))
+    check("text plánu: preskočené", Events.planLines(p2, t8) == listOf("Príde o 8:00: 25. novembra (v ten deň)", "Už prešlo, nepríde: 1 týždeň vopred"))
+    check("text plánu: bez upozornenia", Events.planLines(Events.plan(b.copy(offsets = emptyList()), LocalDateTime.of(2026, 11, 10, 10, 0), t8), t8) == listOf("Bez upozornenia – nepríde nič."))
+    check("plán sedí s tým, čo pošle kontrola", Events.due(listOf(b), Events.afterSave(emptySet(), b, LocalDateTime.of(2026, 11, 22, 10, 0), t8), LocalDateTime.of(2026, 11, 25, 8, 0), t8).let { it.size == 1 && it[0].offset == 0 })
+    check("rok narodenia: vek v zozname", Events.dateLine(ev("x", year = 1990), today) == "streda 25. novembra · každý rok · bude mať 36 rokov")
+    check("dieťa narodené tento rok: bez veku", Events.dateLine(ev("x", year = 2026), today) == "streda 25. novembra · každý rok")
+
     // uloženie
     val list = listOf(b, once.copy(offsets = listOf(14, 3, 0)))
     check("JSON tam a späť", Events.fromJson(Events.toJson(list)) == list)
