@@ -430,6 +430,10 @@ private fun ColorWheel(hue: Float, sat: Float, enabled: Boolean, showMarker: Boo
     }
     var box by remember { mutableStateOf(IntSize.Zero) }
     val sweep = remember { (0..6).map { rgbColor(it * 60f, 1f, 1f) } }
+    // pointerInput sa nereštartuje pri zmene stavu svetla, preto si vždy berieme najnovšie lambdy
+    // (inak koliesko posielalo príznaky zdrojov a jas zo stavu, v akom sa zobrazilo – napr. znova zapínalo vypnuté hlavné svetlo)
+    val pickNow by rememberUpdatedState(onPick)
+    val liveNow by rememberUpdatedState(onLive)
 
     fun pick(pos: Offset): Pair<Float, Float> {
         val r = min(box.width, box.height) / 2f
@@ -446,15 +450,15 @@ private fun ColorWheel(hue: Float, sat: Float, enabled: Boolean, showMarker: Boo
             .size(124.dp)
             .onSizeChanged { box = it }
             .pointerInput(enabled) {
-                if (enabled) detectTapGestures { pos -> val p = pick(pos); h = p.first; s = p.second; moved = true; onPick(p.first, p.second) }
+                if (enabled) detectTapGestures { pos -> val p = pick(pos); h = p.first; s = p.second; moved = true; pickNow(p.first, p.second) }
             }
             .pointerInput(enabled) {
                 if (enabled) {
                     detectDragGestures(
-                        onDragStart = { pos -> dragging = true; val p = pick(pos); h = p.first; s = p.second; moved = true; onLive?.invoke(h, s) },
-                        onDragEnd = { dragging = false; onPick(h, s) },
-                        onDragCancel = { dragging = false; onPick(h, s) },
-                        onDrag = { change, _ -> val p = pick(change.position); h = p.first; s = p.second; onLive?.invoke(h, s) },
+                        onDragStart = { pos -> dragging = true; val p = pick(pos); h = p.first; s = p.second; moved = true; liveNow?.invoke(h, s) },
+                        onDragEnd = { dragging = false; pickNow(h, s) },
+                        onDragCancel = { dragging = false; pickNow(h, s) },
+                        onDrag = { change, _ -> val p = pick(change.position); h = p.first; s = p.second; liveNow?.invoke(h, s) },
                     )
                 }
             },

@@ -404,3 +404,7 @@ Princíp „svieti len to, čo je zapnuté“: tmavý neutrálny základ, teplá
 
 ## 20. Denník príkazov (od verzie 1.29.1)
 V **Technickom info** zariadenia pribudla sekcia „Príkazy z appky, automatiky a widgetu“: každý príkaz, ktorý sa zariadeniu poslal (s časom na milisekundy a zdrojom: appka, posuvník, widget, automatika, poistka, cloud), chyby pripojenia a zmeny zapnuté/vypnuté, ktoré appka videla. Slúži na zistenie, kto svetlu poslal príkaz, keď sa po zapnutí samo vypne. Denník je len v pamäti (`CommandLog.kt`).
+
+### Oprava 1.29.2
+- Farebné koliesko (aj rýchle farby cez ťuknutie na koliesko) používalo staré údaje o svetle z čias, keď sa zobrazilo: po vypnutí hlavného svetla a zmene farby podhľadu poslalo „hlavné svieti“ a rozsvietilo ho. Teraz berie vždy aktuálny stav.
+- Po príkaze sa stav v appke 1,5 s nenechá prepísať starým hlásením pomalého svetla.

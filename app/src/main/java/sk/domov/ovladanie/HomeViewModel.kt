@@ -386,6 +386,9 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
             return
         }
         val current = (_states.value[device.id] as? DeviceState.Online)?.values ?: emptyMap()
+        // pomalé zariadenie (BW-CLT1 ~1 s na príkaz) po 400 ms ešte hlási starý stav; krátko ho nenecháme prepísať to, čo sme poslali
+        // (inak by sa vypnuté hlavné svetlo v appke znova ukázalo ako zapnuté a ďalší príkaz by ho naozaj zapol)
+        dragGuard.release(device.id, values)
         apply(device, Result.success(current + values)) // okamžitá odozva v UI
         viewModelScope.launch(safe) {
             val sent = withContext(Dispatchers.IO) {
