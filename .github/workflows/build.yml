@@ -2,7 +2,7 @@ name: Zostaviť APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -19,24 +19,24 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - uses: android-actions/setup-android@v3
+
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Zostaviť debug APK
+      - name: Zostaviť APK
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon
-
-      - name: Pripraviť súbor
-        run: cp app/build/outputs/apk/debug/app-debug.apk Domov.apk
+          ./gradlew :app:assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk Domov.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Domov-apk
+          name: Domov
           path: Domov.apk
 
-      - name: Vydať ako release (priamy download APK)
+      - name: Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }}
+          name: Domov (build ${{ github.run_number }})
           files: Domov.apk

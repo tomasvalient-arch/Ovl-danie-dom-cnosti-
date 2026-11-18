@@ -12,8 +12,8 @@ android {
         applicationId = "sk.domov.ovladanie"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 34
+        versionName = "1.28"
     }
 
     // Pevný ladiaci kľúč: každý build má rovnaký podpis, takže sa nová verzia dá nainštalovať
@@ -29,7 +29,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Release build: bez ladiaceho režimu, R8 zmenší a zoptimalizuje kód (rýchlejší štart, menej práce CPU = menej batérie).
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // rovnaký kľúč ako debug build → release sa nainštaluje priamo cez doterajšiu verziu, bez straty údajov
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -49,10 +55,13 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-core")
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // QR kód pozvánky do domácnosti (len generovanie, bez kamery)
+    implementation("com.google.zxing:core:3.5.3")
+    // skenovanie QR kódu pri pripojení k domácnosti (malá knižnica nad zxing, vlastná obrazovka kamery)
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0") { isTransitive = false }
 }

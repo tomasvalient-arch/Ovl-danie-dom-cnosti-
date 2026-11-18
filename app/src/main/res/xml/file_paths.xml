@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- len dočasný súbor zálohy na zdieľanie -->
+    <cache-path name="zaloha" path="zaloha/" />
+    <!-- kópia nainštalovanej appky na poslanie cez Zdieľať (Quick Share, Bluetooth) -->
+    <cache-path name="apk" path="apk/" />
+</paths>

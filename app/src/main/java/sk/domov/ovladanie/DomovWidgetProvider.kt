@@ -22,6 +22,8 @@ class DomovWidgetProvider : AppWidgetProvider() {
         Thread {
             try {
                 for (id in appWidgetIds) refresh(context.applicationContext, id)
+            } catch (e: Exception) {
+                android.util.Log.w("Domov", "widget", e)
             } finally {
                 pending.finish()
             }
@@ -36,6 +38,8 @@ class DomovWidgetProvider : AppWidgetProvider() {
             Thread {
                 try {
                     toggle(context.applicationContext, id)
+                } catch (e: Exception) {
+                    android.util.Log.w("Domov", "widget", e)
                 } finally {
                     pending.finish()
                 }
@@ -53,11 +57,6 @@ class DomovWidgetProvider : AppWidgetProvider() {
         const val ACTION_TOGGLE = "sk.domov.ovladanie.WIDGET_TOGGLE"
         const val EXTRA_WIDGET_ID = "widgetId"
 
-        private const val ON_BG = 0xFFFFC857.toInt()
-        private const val ON_FG = 0xFF1B1B1F.toInt()
-        private const val OFF_FG = 0xFFE3E2E6.toInt()
-        private const val OFF_FG_DIM = 0xFFA9A8AE.toInt()
-        private const val ERROR_FG = 0xFFFFB4AB.toInt()
 
         private fun findDevice(context: Context, widgetId: Int): Device? {
             val deviceId = WidgetPrefs.deviceId(context, widgetId) ?: return null
@@ -88,15 +87,16 @@ class DomovWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(R.id.widget_status, text)
             views.setImageViewResource(R.id.widget_icon, if (isLight) R.drawable.ic_bulb else R.drawable.ic_power)
             views.setInt(R.id.widget_root, "setBackgroundResource", if (on) R.drawable.widget_bg_on else R.drawable.widget_bg_off)
-            val titleColor = if (on) ON_FG else OFF_FG
+            // farby podľa témy appky (tmavá/svetlá podľa systému), jantárová pri zapnutom
+            val titleColor = context.getColor(if (on) R.color.widget_text_on else R.color.widget_text)
             val statusColor = when {
-                failed -> ERROR_FG
-                on -> ON_FG
-                else -> OFF_FG_DIM
+                failed -> context.getColor(R.color.widget_error)
+                on -> context.getColor(R.color.widget_text_on_muted)
+                else -> context.getColor(R.color.widget_text_muted)
             }
             views.setTextColor(R.id.widget_title, titleColor)
             views.setTextColor(R.id.widget_status, statusColor)
-            views.setInt(R.id.widget_icon, "setColorFilter", titleColor)
+            views.setInt(R.id.widget_icon, "setColorFilter", context.getColor(if (on) R.color.widget_icon_on else R.color.widget_icon_off))
 
             val intent = Intent(context, DomovWidgetProvider::class.java)
                 .setAction(ACTION_TOGGLE)
@@ -121,7 +121,7 @@ class DomovWidgetProvider : AppWidgetProvider() {
         /** Opýta sa zariadenia na aktuálny stav a prekreslí widget. Volaj mimo hlavného vlákna. */
         fun refresh(context: Context, widgetId: Int) {
             val device = findDevice(context, widgetId) ?: return
-            val network = DeviceClient.wifiNetwork(context)
+            val network = wifiNetwork(context)
             if (network == null) {
                 render(context, widgetId, "Bez WiFi", failed = true)
                 return
@@ -142,7 +142,7 @@ class DomovWidgetProvider : AppWidgetProvider() {
                 render(context, widgetId, "Chýba", failed = true)
                 return
             }
-            val network = DeviceClient.wifiNetwork(context)
+            val network = wifiNetwork(context)
             if (network == null) {
                 render(context, widgetId, "Bez WiFi", failed = true)
                 return
@@ -152,7 +152,10 @@ class DomovWidgetProvider : AppWidgetProvider() {
                 val before = DeviceClient.readState(network, device)
                 val power = powerDpOf(device, before) ?: throw IOException("Zariadenie nemá vypínač")
                 val target = before[power] != true
-                DeviceClient.setValues(network, device, mapOf(power to target))
+                // fritéza, ktorá varí: najprv bezpečný Stop (štart/stop = false), hlavný vypínač sa vtedy nepoužije
+                val fryer = if (SafeOff.looksLikeFryer(device, before) && SafeOff.fryerRunning(before)) Fryer.detect(before) else null
+                if (fryer != null) DeviceClient.setValues(network, device, Fryer.start(fryer, false))
+                else DeviceClient.setValues(network, device, mapOf(power to target))
                 Thread.sleep(350)
                 // Skontroluj, či zariadenie zmenu naozaj prijalo; ak sa nedá overiť, verím príkazu.
                 val after: Map<String, Any> = try {

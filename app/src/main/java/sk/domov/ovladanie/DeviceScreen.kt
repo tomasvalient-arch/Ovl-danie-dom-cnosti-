@@ -2,6 +2,7 @@
 
 package sk.domov.ovladanie
 
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,20 +12,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,25 +30,33 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.delay
+import androidx.lifecycle.repeatOnLifecycle
 
-/** Detail jedného zariadenia: veľký vypínač, ovládanie podľa typu a zoznam všetkých hodnôt. */
+/** Obnova stavu otvoreného zariadenia (predtým 4 s). */
+private const val DEVICE_REFRESH_MS = 12_000L
+
+/** Detail jedného zariadenia: ovládanie podľa typu (svetlo, zásuvka, …) a zoznam všetkých hodnôt. */
 @Composable
 fun DeviceScreen(
     device: Device,
@@ -63,30 +68,80 @@ fun DeviceScreen(
 ) {
     var showEdit by remember { mutableStateOf(false) }
 
-    // Kým je detail otvorený, stav sa každé 4 sekundy obnoví (uvidíš zmeny z Tuya appky aj z tlačidla na zariadení).
+    // Kým je detail otvorený a appka na obrazovke, stav sa každých 12 s obnoví (uvidíš zmeny z Tuya appky aj z tlačidla
+    // na zariadení). Po návrate do appky sa obnoví hneď; keď je appka na pozadí, nepýta sa vôbec (predtým každé 4 s aj na pozadí).
     val latestDevice by rememberUpdatedState(device)
-    LaunchedEffect(device.id, wifiOn) {
-        while (wifiOn) {
-            delay(4000)
-            vm.refresh(latestDevice, quiet = true)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(device.id, wifiOn, lifecycleOwner) {
+        if (!wifiOn) return@LaunchedEffect
+        var first = true
+        lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            // pri prvom otvorení stav načíta samotná obrazovka; obnoviť hneď len po návrate z pozadia
+            if (!first && !showEdit) vm.refresh(latestDevice, quiet = true)
+            first = false
+            while (true) {
+                delay(DEVICE_REFRESH_MS)
+                // kým sú otvorené nastavenia (technické info, sledovanie zmien), zariadenie zbytočne nezaťažujeme
+                if (!showEdit) vm.refresh(latestDevice, quiet = true)
+            }
         }
     }
+
+    val values = (state as? DeviceState.Online)?.values
+    val kindTitle = values?.let { deviceKindTitle(device, it) } ?: "Zariadenie"
+    val subtitle = when (state) {
+        is DeviceState.Online -> "$kindTitle · online"
+        is DeviceState.Loading -> "$kindTitle · pripájam sa…"
+        is DeviceState.Error -> "$kindTitle · offline"
+    }
+    // svetlo sa zapína ťuknutím na kruh; ostatné zariadenia majú vypínač hore (ako v návrhu)
+    val power = values?.let { powerDpOf(device, it) }
+    val isLight = values != null && Light.isLight(values)
+    val on = power != null && values?.get(power) == true
+    // potvrdenie nebezpečného zapnutia (ohrievač) aj z vypínača hore
+    var pendingTop by remember { mutableStateOf<Pair<String, Map<String, Any>>?>(null) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(device.name) },
+                title = {
+                    Column {
+                        Text(device.name, style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                        Text(
+                            subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (state is DeviceState.Error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Späť")
+                        Icon(Sym.arrowBack, contentDescription = "Späť")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { vm.refresh(device) }, enabled = wifiOn) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Obnoviť")
+                    if (state is DeviceState.Error) {
+                        IconButton(onClick = { vm.refresh(device) }, enabled = wifiOn) {
+                            Icon(Sym.refresh, contentDescription = "Obnoviť")
+                        }
                     }
                     IconButton(onClick = { showEdit = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Nastavenia zariadenia")
+                        Icon(Sym.tune, contentDescription = "Nastavenia zariadenia")
+                    }
+                    if (power != null && !isLight && Fryer.detect(values) == null &&
+                        (Templates.detect(values, device.schema, device.category) as? SocketTemplate)?.power != null
+                    ) {
+                        DomovSwitch(
+                            checked = on,
+                            enabled = wifiOn,
+                            modifier = Modifier.padding(end = 12.dp),
+                            onCheckedChange = { target ->
+                                val cmd = mapOf<String, Any>(power to target)
+                                val template = Templates.detect(values, device.schema, device.category)
+                                val warning = Templates.confirmation(template, power, cmd)
+                                if (warning != null) pendingTop = warning to cmd else vm.setValues(device, cmd)
+                            },
+                        )
                     }
                 },
             )
@@ -97,8 +152,8 @@ fun DeviceScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (!wifiOn) WifiBanner()
             if (notice != null) NoticeBanner(message = notice, onDismiss = { vm.dismissNotice() })
@@ -116,40 +171,178 @@ fun DeviceScreen(
             onDismiss = { showEdit = false },
             onSave = { vm.addOrUpdate(it); showEdit = false },
             onDelete = { vm.remove(device); showEdit = false },
+            values = (state as? DeviceState.Online)?.values,
+            tech = TechActions(
+                probe = { vm.techProbe(device) },
+                cloud = { vm.techCloud(device) },
+                monitor = { sec, onLine -> vm.techMonitor(device, sec, onLine) },
+            ),
         )
+    }
+    pendingTop?.let { (warning, cmd) ->
+        AlertDialog(
+            onDismissRequest = { pendingTop = null },
+            title = { Text("Naozaj zapnúť?") },
+            text = { Text(warning) },
+            confirmButton = { TextButton(onClick = { pendingTop = null; vm.setValues(device, cmd) }) { Text("Zapnúť") } },
+            dismissButton = { TextButton(onClick = { pendingTop = null }) { Text("Zrušiť") } },
+        )
+    }
+}
+
+/** Hodnoty, ktoré už rieši ovládanie podľa typu (nezobrazujú sa medzi ďalšími nastaveniami). */
+private fun handledDps(spec: LightSpec?, dual: DualSpec?, fryer: FryerSpec?, template: DeviceTemplate?): Set<String> {
+    val out = HashSet<String>()
+    spec?.let { out += it.handled }
+    dual?.let { out += it.handled }
+    fryer?.let { out += it.handled }
+    when (template) {
+        is SocketTemplate -> {
+            out += template.switches
+            listOfNotNull(template.countdown, template.power, template.voltage, template.current, template.energy).forEach { out += it.dp }
+        }
+        is ClimateTemplate -> {
+            out += listOfNotNull(template.power, template.oscillation, template.childLock)
+            listOfNotNull(template.target, template.current, template.currentTemp, template.speedNum).forEach { out += it.dp }
+            listOfNotNull(template.mode, template.speedEnum).forEach { out += it.dp }
+        }
+        is CoverTemplate -> {
+            listOfNotNull(template.position, template.positionState).forEach { out += it.dp }
+            template.control?.let { out += it.dp }
+        }
+        null -> {}
+    }
+    return out
+}
+
+/** Popis druhu zariadenia pod názvom, napr. „Svetlo“, „Zásuvka s meraním“. */
+internal fun deviceKindTitle(device: Device, values: Map<String, Any>): String {
+    LightChannels.detect(device, values)?.let { ml -> return if (ml.channels.size == 2) "Svetlo s dvoma zdrojmi" else "Svetlo s ${ml.channels.size} zdrojmi" }
+    if (Light.detect(values) != null) return "Svetlo"
+    if (Light.detectDual(values, device.whiteSwitchDp, device.colourSwitchDp) != null) return "Svetlo s dvoma zdrojmi"
+    if (Fryer.detect(values) != null) return "Fritéza"
+    return when (val t = Templates.detect(values, device.schema, device.category)) {
+        is SocketTemplate -> if (t.kind == TemplateKind.SOCKET && t.hasMetering) "Zásuvka s meraním" else t.kind.title
+        null -> when (AutoDevices.kind(device, values)) {
+            AutoKind.LIGHT -> "Svetlo"
+            AutoKind.SOCKET -> "Zásuvka"
+            else -> "Zariadenie"
+        }
+        else -> t.kind.title
     }
 }
 
 @Composable
 private fun ErrorBox(message: String, onRetry: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
-            Text(
-                text = "Skontroluj IP adresu, local key a verziu protokolu v nastaveniach (ozubené koliesko hore).",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-            )
-            Button(onClick = onRetry) { Text("Skúsiť znova") }
+    DomovCard(color = MaterialTheme.colorScheme.errorContainer, border = MaterialTheme.colorScheme.errorContainer) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Sym.cloudOff, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.size(12.dp))
+            Text("Zariadenie neodpovedá", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
         }
+        Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+        Text(
+            text = "Skontroluj IP adresu, local key a verziu protokolu v nastaveniach (ikona vpravo hore).",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+        )
+        Button(onClick = onRetry) { Text("Skúsiť znova") }
     }
 }
 
 @Composable
 private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Boolean, vm: HomeViewModel) {
+    // plynulé posuvníky: priebežné príkazy počas ťahania (nebezpečné príkazy s potvrdením len po pustení)
+    val live: (Map<String, Any>) -> Unit = { cmd ->
+        val template = Templates.detect(values, device.schema, device.category)
+        if (wifiOn && Templates.confirmation(template, powerDpOf(device, values), cmd) == null) vm.liveValues(device, cmd)
+    }
+    CompositionLocalProvider(LocalLiveCommand provides live) {
+        DeviceContentInner(device, values, wifiOn, vm)
+    }
+}
+
+@Composable
+private fun DeviceContentInner(device: Device, values: Map<String, Any>, wifiOn: Boolean, vm: HomeViewModel) {
     val power = powerDpOf(device, values)
     val on = power != null && values[power] == true
-    val spec = Light.detect(values)
-    val dual = if (spec == null) Light.detectDual(values, device.whiteSwitchDp, device.colourSwitchDp) else null
-    val fryer = if (spec == null && dual == null) Fryer.detect(values) else null
-    val hasControls = spec != null || dual != null || fryer != null
+    // svetlo s viacerými zdrojmi (hlavné + podhľad) má prednosť pred obyčajným svetlom
+    val multi = LightChannels.detect(device, values)
+    val spec = if (multi == null) Light.detect(values, device.schema) else null
+    val dual = if (multi == null && spec == null) Light.detectDual(values, device.whiteSwitchDp, device.colourSwitchDp) else null
+    val fryer = if (multi == null && spec == null && dual == null) Fryer.detect(values) else null
+    val template = if (multi == null && spec == null && dual == null && fryer == null) {
+        Templates.detect(values, device.schema, device.category)
+    } else {
+        null
+    }
+    val hasControls = multi != null || spec != null || dual != null || fryer != null || template != null
 
-    if (power != null) {
-        PowerButton(on = on, enabled = wifiOn, isLight = spec != null || dual != null) {
-            vm.setValues(device, mapOf(power to !on))
+    // Príkazy, ktoré môžu byť nebezpečné (zapnutie ohrievača), sa najprv potvrdia.
+    var pending by remember { mutableStateOf<Pair<String, Map<String, Any>>?>(null) }
+    val send: (Map<String, Any>) -> Unit = { cmd ->
+        val warning = Templates.confirmation(template, power, cmd)
+        if (warning != null) pending = warning to cmd else vm.setValues(device, cmd)
+    }
+
+    when {
+        multi != null -> MultiLightOrb(multi, values, enabled = wifiOn) { vm.setValues(device, it) }
+        spec != null -> LightOrbFor(spec, values, enabled = wifiOn) { vm.setValues(device, it) }
+        dual != null && power != null -> {
+            val st = Light.readDual(dual, values)
+            LightOrb(on = on, percent = st.whitePercent, glow = null, enabled = wifiOn) { send(mapOf(power to !on)) }
+        }
+        template is SocketTemplate && template.power != null -> {} // veľké číslo príkonu a vypínač hore (SocketControls)
+        power != null -> PowerCard(
+            icon = kindIcon(device, values, on),
+            on = on,
+            summary = statusText(device, DeviceState.Online(values))
+                .removePrefix(if (on) "Zapnuté" else "Vypnuté").removePrefix(" · ").trim()
+                .ifBlank { if (on) "Ťukni pre vypnutie" else "Ťukni pre zapnutie" },
+            enabled = wifiOn,
+        ) { send(mapOf(power to !on)) }
+    }
+
+    if (template != null) {
+        TemplateControls(
+            device = device,
+            template = template,
+            values = values,
+            wifiOn = wifiOn,
+            powerOn = power == null || on,
+            onCommand = send,
+        )
+    }
+
+    if (multi != null) {
+        MultiLightControls(ml = multi, values = values, enabled = wifiOn, onCommand = { vm.setValues(device, it) })
+    }
+
+    // obyčajné svetlo, ktoré vie aj zmiešaný režim (DP 51): ponuka samostatného ovládania hlavného svetla a podhľadu
+    if (spec != null && LightChannels.suggestMix(device, values)) {
+        val reported = LightChannels.hasMixCapability(device, values)
+        DomovCard {
+            Text("Má toto svetlo aj podhľad?", style = MaterialTheme.typography.titleSmall)
+            Text(
+                if (reported) {
+                    "Svetlo hlási zmiešaný režim (mix_rgbcw). Ak má hlavné svetlo a samostatné farebné podsvietenie, " +
+                        "dajú sa ovládať nezávisle – oba naraz."
+                } else {
+                    "Stropné svetlá s farebným podsvietením (napr. BlitzWolf BW-CLT1) ovládajú hlavné svetlo a podhľad " +
+                        "zvyčajne cez skrytú hodnotu DP 51, ktorú Tuya cloud v popise neuvádza. Skús samostatné ovládanie – " +
+                        "ak svetlo nereaguje, vráť to tu: nastavenia → Kanály svetla → Jedno svetlo."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row {
+                TextButton(onClick = { vm.addOrUpdate(device.copy(lightRoles = device.lightRoles + (LightChannels.ROLE_MODEL to "mix")), reload = false) }) {
+                    Text("Ovládať samostatne")
+                }
+                TextButton(onClick = { vm.addOrUpdate(device.copy(lightRoles = device.lightRoles + (LightChannels.ROLE_MODEL to "single")), reload = false) }) {
+                    Text("Nie, je to jedno svetlo")
+                }
+            }
         }
     }
 
@@ -180,57 +373,109 @@ private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Bool
             enabled = wifiOn && (fryer.power == null || on),
             onCommand = { vm.setValues(device, it) },
         )
+        FryerAlertsCard(device)
     }
 
-    // Zoznam všetkých hodnôt s ich číslami (pri svetle zbalený), aby bolo vidieť, čo zariadenie hlási.
+    // časovač vypnutia pre svetlá a ďalšie zariadenia s odpočtom (zásuvka ho má vo vlastnom ovládaní)
+    if (template !is SocketTemplate || template.countdown == null) {
+        AutoDevices.countdownDp(device, values)?.let { (dp, minutes) ->
+            if (values[dp] is Number) {
+                val raw = (values[dp] as Number).toLong()
+                TimerCard(
+                    title = if (multi != null || spec != null || dual != null) "Časovač vypnutia" else "Odpočet",
+                    leftSec = if (minutes) raw * 60 else raw,
+                    on = on,
+                    enabled = wifiOn,
+                    onSet = { min -> send(mapOf(dp to if (minutes) min else min * 60)) },
+                )
+            }
+        }
+    }
+
+    // Zoznam všetkých hodnôt s ich číslami (pri ovládaní zbalený), aby bolo vidieť, čo zariadenie hlási.
     val rows = values.filterKeys { dp -> dp !in device.hidden }
     // Svetlo s dvoma zdrojmi bez nastavených vypínačov: zoznam hneď rozbalíme, aby sa dali vypínače priradiť.
     var showAll by remember { mutableStateOf(dual != null && dual.whiteSwitch == null && dual.colourSwitch == null) }
     val expanded = !hasControls || showAll
 
+    // nastavenia z popisu hodnôt (napr. stav po výpadku prúdu, kontrolka, detská poistka) – vždy viditeľné
+    val handled = handledDps(spec, dual, fryer, template) + setOfNotNull(power) + (multi?.handled ?: emptySet()) +
+        setOfNotNull(AutoDevices.countdownDp(device, values)?.first)
+    val settings = if (!hasControls) emptyList() else rows.keys
+        .filter { it !in handled }
+        .mapNotNull { dp -> device.schema[dp]?.let { dp to it } }
+        .filter { (dp, sc) ->
+            !Schema.isReadOnly(sc.code) &&
+                ((sc.type == DpType.ENUM && sc.range.isNotEmpty() && values[dp] is String) || (sc.type == DpType.BOOLEAN && values[dp] is Boolean))
+        }
+        .sortedBy { it.first.toIntOrNull() ?: Int.MAX_VALUE }
+    var enumFor by remember { mutableStateOf<Pair<String, DpSchema>?>(null) }
+
     if (rows.isNotEmpty()) {
-        if (hasControls) {
-            TextButton(onClick = { showAll = !showAll }) {
-                Text(if (showAll) "Skryť ďalšie hodnoty" else "Ďalšie hodnoty (${rows.size})")
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            SectionLabel(if (hasControls) "Ďalšie nastavenia" else "Hodnoty zariadenia", modifier = Modifier.weight(1f))
+            if (hasControls) {
+                TextButton(onClick = { showAll = !showAll }) {
+                    Text(if (showAll) "Skryť hodnoty" else "Všetky hodnoty (${rows.size})")
+                }
             }
-        } else {
-            Text("Hodnoty zariadenia", style = MaterialTheme.typography.titleMedium)
+        }
+        if (settings.isNotEmpty() && !showAll) {
+            DomovCard(padding = 10.dp, spacing = 0.dp) {
+                settings.forEach { (dp, sc) ->
+                    val icon = when {
+                        sc.code.startsWith("relay_status") -> Sym.power
+                        sc.code.contains("light") || sc.code.contains("backlight") -> Sym.lightbulb
+                        sc.code.contains("lock") -> Sym.lock
+                        else -> Sym.tune
+                    }
+                    val v = values[dp]
+                    if (v is Boolean) {
+                        SettingRow(icon = icon, title = dpLabel(device, dp)) {
+                            DomovSwitch(checked = v, onCheckedChange = { send(mapOf(dp to it)) }, enabled = wifiOn)
+                        }
+                    } else {
+                        SettingRow(icon = icon, title = dpLabel(device, dp), value = Schema.enumLabel(sc.code, v.toString()), enabled = wifiOn, onClick = { enumFor = dp to sc })
+                    }
+                }
+            }
         }
         if (expanded) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    rows.forEach { (dp, value) ->
-                        val role = when {
-                            dp == device.whiteSwitchDp.trim() -> " · vypínač hlavného svetla"
-                            dp == device.colourSwitchDp.trim() -> " · vypínač podhľadového svetla"
-                            else -> ""
-                        }
-                        DpRow(
-                            label = (device.labels[dp] ?: "Hodnota $dp") + role,
-                            value = value,
-                            enabled = wifiOn,
-                            onSet = { vm.setValue(device, dp, it) },
-                            onRename = { name ->
-                                vm.addOrUpdate(device.copy(labels = device.labels + (dp to name)), reload = false)
-                            },
-                            onHide = { vm.addOrUpdate(device.copy(hidden = device.hidden + dp), reload = false) },
-                            onMakePower = if (value is Boolean) {
-                                { vm.addOrUpdate(device.copy(powerDp = dp), reload = false) }
-                            } else {
-                                null
-                            },
-                            onMakeWhiteSwitch = if (value is Boolean && dual != null) {
-                                { vm.addOrUpdate(device.copy(whiteSwitchDp = dp), reload = false) }
-                            } else {
-                                null
-                            },
-                            onMakeColourSwitch = if (value is Boolean && dual != null) {
-                                { vm.addOrUpdate(device.copy(colourSwitchDp = dp), reload = false) }
-                            } else {
-                                null
-                            },
-                        )
+            DomovCard(padding = 12.dp, spacing = 0.dp) {
+                rows.forEach { (dp, value) ->
+                    val role = when {
+                        dp == device.whiteSwitchDp.trim() -> " · vypínač hlavného svetla"
+                        dp == device.colourSwitchDp.trim() -> " · vypínač podhľadového svetla"
+                        else -> ""
                     }
+                    val schema = device.schema[dp]
+                    DpRow(
+                        label = dpLabel(device, dp) + role,
+                        value = value,
+                        enabled = wifiOn,
+                        schema = schema,
+                        caption = if (schema != null) "č. $dp · ${schema.code}" else "č. $dp",
+                        onSet = { send(mapOf(dp to it)) },
+                        onRename = { name ->
+                            vm.addOrUpdate(device.copy(labels = device.labels + (dp to name)), reload = false)
+                        },
+                        onHide = { vm.addOrUpdate(device.copy(hidden = device.hidden + dp), reload = false) },
+                        onMakePower = if (value is Boolean) {
+                            { vm.addOrUpdate(device.copy(powerDp = dp), reload = false) }
+                        } else {
+                            null
+                        },
+                        onMakeWhiteSwitch = if (value is Boolean && dual != null) {
+                            { vm.addOrUpdate(device.copy(whiteSwitchDp = dp), reload = false) }
+                        } else {
+                            null
+                        },
+                        onMakeColourSwitch = if (value is Boolean && dual != null) {
+                            { vm.addOrUpdate(device.copy(colourSwitchDp = dp), reload = false) }
+                        } else {
+                            null
+                        },
+                    )
                 }
             }
             if (dual != null && (dual.whiteSwitch == null || dual.colourSwitch == null)) {
@@ -254,31 +499,105 @@ private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Bool
             style = MaterialTheme.typography.bodySmall,
         )
     }
+
+    ChangeLog(device = device, values = values)
+
+    enumFor?.let { (dp, sc) ->
+        EnumDialog(
+            title = dpLabel(device, dp),
+            schema = sc,
+            current = values[dp]?.toString().orEmpty(),
+            onDismiss = { enumFor = null },
+            onConfirm = { enumFor = null; send(mapOf(dp to it)) },
+        )
+    }
+
+    pending?.let { (warning, cmd) ->
+        AlertDialog(
+            onDismissRequest = { pending = null },
+            title = { Text("Naozaj zapnúť?") },
+            text = { Text(warning) },
+            confirmButton = {
+                TextButton(onClick = { pending = null; vm.setValues(device, cmd) }) { Text("Zapnúť") }
+            },
+            dismissButton = { TextButton(onClick = { pending = null }) { Text("Zrušiť") } },
+        )
+    }
 }
 
+/**
+ * Diagnostika: zapisuje, ktoré hodnoty sa zmenili, kým je detail otvorený. Stačí prepnúť niečo v Tuya appke
+ * (alebo na zariadení) a hneď je vidieť, ktoré číslo hodnoty sa tým mení.
+ */
 @Composable
-private fun PowerButton(on: Boolean, enabled: Boolean, isLight: Boolean, onClick: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(104.dp)
-                .clip(CircleShape)
-                .background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                .clickable(enabled = enabled, onClick = onClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(if (isLight) R.drawable.ic_bulb else R.drawable.ic_power),
-                contentDescription = if (on) "Vypnúť" else "Zapnúť",
-                modifier = Modifier.size(48.dp),
-                tint = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+private fun ChangeLog(device: Device, values: Map<String, Any>) {
+    val deviceId = device.id
+    val entries = remember(deviceId) { mutableStateListOf<String>() }
+    var previous by remember(deviceId) { mutableStateOf<Map<String, Any>?>(null) }
+    var open by remember(deviceId) { mutableStateOf(false) }
+
+    LaunchedEffect(values) {
+        val old = previous
+        if (old != null && old != values) {
+            val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            val keys = (old.keys + values.keys).sortedBy { it.toIntOrNull() ?: Int.MAX_VALUE }
+            val line = keys.filter { old[it] != values[it] }
+                .joinToString("; ") { k ->
+                    val name = dpLabel(device, k).let { if (it == "Hodnota $k") it else "$it ($k)" }
+                    "$name: ${old[k] ?: "–"} → ${values[k] ?: "–"}"
+                }
+            entries.add(0, "$time  $line")
+            while (entries.size > 30) entries.removeAt(entries.size - 1)
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(if (on) "Zapnuté" else "Vypnuté", style = MaterialTheme.typography.titleMedium)
+        previous = values
+    }
+
+    TextButton(onClick = { open = !open }) {
+        Text(if (open) "Skryť zmeny hodnôt" else "Zmeny hodnôt (${entries.size})")
+    }
+    if (open) {
+        DomovCard {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (entries.isEmpty()) {
+                    Text(
+                        text = "Zatiaľ sa nič nezmenilo. Prepni niečo v Tuya appke alebo na zariadení a o pár " +
+                            "sekúnd sa tu ukáže, ktoré hodnoty sa zmenili.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    entries.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                }
+            }
+        }
+    }
+}
+
+/** Veľká karta vypínača pre zariadenia bez vlastného „hero“ (termostat, fritéza, bežný vypínač…). */
+@Composable
+private fun PowerCard(icon: androidx.compose.ui.graphics.vector.ImageVector, on: Boolean, summary: String, enabled: Boolean, onClick: () -> Unit) {
+    val c = Domov.colors
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = if (on) Color.Transparent else c.tileOff,
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (on) c.tileOnBorder else c.tileOffBorder),
+    ) {
+        Row(
+            modifier = Modifier
+                .then(if (on) Modifier.background(c.tileOn) else Modifier)
+                .padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconCircle(icon, on = on, size = 64.dp)
+            Spacer(Modifier.size(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(if (on) "Zapnuté" else "Vypnuté", style = MaterialTheme.typography.headlineSmall, color = if (on) c.onTileOn else MaterialTheme.colorScheme.onSurface)
+                Text(summary, style = MaterialTheme.typography.bodyMedium, color = if (on) c.onTileOnMuted else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Sym.powerSettingsNew, contentDescription = if (on) "Vypnúť" else "Zapnúť", tint = if (on) c.onTileOn else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -289,6 +608,9 @@ private fun DpRow(
     value: Any,
     enabled: Boolean,
     onSet: (Any) -> Unit,
+    /** Popis z Tuya cloudu (jednotka, rozsah, možnosti). Null = zobrazí sa ako doteraz. */
+    schema: DpSchema? = null,
+    caption: String? = null,
     onRename: (String) -> Unit,
     onHide: () -> Unit,
     onMakePower: (() -> Unit)?,
@@ -298,8 +620,12 @@ private fun DpRow(
     var editing by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    val text = value.toString()
-    val editable = value is Number || (value is String && text.length <= 40)
+    val raw = value.toString()
+    val text = Schema.format(schema, value)
+    val readOnly = schema != null && Schema.isReadOnly(schema.code)
+    val numberSchema = schema?.takeIf { it.type == DpType.INTEGER && value is Number }
+    val enumSchema = schema?.takeIf { it.type == DpType.ENUM && it.range.isNotEmpty() }
+    val editable = !readOnly && (value is Number || (value is String && raw.length <= 40))
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -307,22 +633,29 @@ private fun DpRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(label)
-            if (value !is Boolean) {
+            if (value !is Boolean || readOnly) {
                 Text(
                     text = if (text.length > 40) text.take(40) + "…" else text,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (caption != null) {
+                Text(
+                    text = caption + if (readOnly) " · len na čítanie" else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        if (value is Boolean) {
-            Switch(checked = value, onCheckedChange = { onSet(it) }, enabled = enabled)
+        if (value is Boolean && !readOnly) {
+            DomovSwitch(checked = value, onCheckedChange = { onSet(it) }, enabled = enabled)
         } else if (editable) {
             TextButton(onClick = { editing = true }, enabled = enabled) { Text("Zmeniť") }
         }
         Box {
             IconButton(onClick = { menu = true }) {
-                Icon(Icons.Default.MoreVert, contentDescription = "Viac")
+                Icon(Sym.moreVert, contentDescription = "Viac")
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
@@ -368,10 +701,26 @@ private fun DpRow(
             },
         )
     }
-    if (editing) {
+    if (editing && numberSchema != null) {
+        NumberDialog(
+            title = label,
+            schema = numberSchema,
+            raw = (value as Number).toLong(),
+            onDismiss = { editing = false },
+            onConfirm = { editing = false; onSet(it) },
+        )
+    } else if (editing && enumSchema != null) {
+        EnumDialog(
+            title = label,
+            schema = enumSchema,
+            current = raw,
+            onDismiss = { editing = false },
+            onConfirm = { editing = false; onSet(it) },
+        )
+    } else if (editing) {
         ValueDialog(
             title = label,
-            initial = text,
+            initial = raw,
             numeric = value is Number,
             onDismiss = { editing = false },
             onConfirm = { input ->
@@ -385,4 +734,83 @@ private fun DpRow(
             },
         )
     }
+}
+
+/** Zmena čísla podľa Tuya popisu: posuvník v rozsahu min–max s krokom a tlačidlá − / +. */
+@Composable
+private fun NumberDialog(title: String, schema: DpSchema, raw: Long, onDismiss: () -> Unit, onConfirm: (Long) -> Unit) {
+    var current by rememberSaveable { androidx.compose.runtime.mutableLongStateOf(raw) }
+    var typed by rememberSaveable { mutableStateOf<String?>(null) }
+    val min = schema.min
+    val max = schema.max
+    fun clamp(v: Long): Long = Schema.toRaw(schema, Schema.scaled(v, schema.scale))
+    val count = if (min != null && max != null && max > min) (max - min) / schema.step else 0L
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(Schema.format(schema, current), style = MaterialTheme.typography.headlineSmall)
+                if (min != null && max != null) {
+                    Text(
+                        "Rozsah ${Schema.format(schema, min)} – ${Schema.format(schema, max)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalIconButton(onClick = { current = clamp(current - schema.step); typed = null }) { Text("−") }
+                    if (count in 1..1000) {
+                        Slider(
+                            value = current.coerceIn(min!!, max!!).toFloat(),
+                            onValueChange = { current = clamp(it.toLong()); typed = null },
+                            valueRange = min.toFloat()..max.toFloat(),
+                            steps = if (count in 2..200) (count - 1).toInt() else 0,
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = typed ?: Schema.formatNumber(Schema.scaled(current, schema.scale), schema.scale),
+                            onValueChange = { input ->
+                                typed = input
+                                input.replace(',', '.').toDoubleOrNull()?.let { current = Schema.toRaw(schema, it) }
+                            },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    FilledTonalIconButton(onClick = { current = clamp(current + schema.step); typed = null }) { Text("+") }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(current) }) { Text("Nastaviť") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
+    )
+}
+
+/** Výber jednej z možností podľa Tuya popisu (s prekladom bežných hodnôt). */
+@Composable
+private fun EnumDialog(title: String, schema: DpSchema, current: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var selected by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                schema.range.forEach { option ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { selected = option },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selected == option, onClick = { selected = option })
+                        val label = Schema.enumLabel(schema.code, option)
+                        Text(if (label == option) option else "$label ($option)")
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(selected) }) { Text("Nastaviť") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
+    )
 }

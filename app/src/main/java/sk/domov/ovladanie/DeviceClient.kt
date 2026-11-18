@@ -1,9 +1,7 @@
 package sk.domov.ovladanie
 
 import android.content.Context
-import android.net.ConnectivityManager
 import android.net.Network
-import android.net.NetworkCapabilities
 import org.json.JSONArray
 import org.json.JSONObject
 import sk.domov.ovladanie.tuya.TuyaDevice
@@ -45,27 +43,30 @@ object DeviceClient {
         throw IllegalStateException("nedosiahnuteľné")
     }
 
-    /** Nájde WiFi sieť telefónu, alebo null ak telefón nie je na WiFi. */
-    @Suppress("DEPRECATION")
-    fun wifiNetwork(context: Context): Network? {
-        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
-        fun isWifi(n: Network): Boolean =
-            cm.getNetworkCapabilities(n)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-        val active = cm.activeNetwork
-        if (active != null && isWifi(active)) return active
-        return cm.allNetworks.firstOrNull { isWifi(it) }
-    }
-
     private fun client(network: Network, d: Device): TuyaDevice {
         // Sockety viažeme priamo na WiFi sieť, aby sa nepoužilo mobilné dáta ani keď WiFi nemá internet.
         return TuyaDevice(d.ip, d.devId, d.localKey, d.version, network.socketFactory)
     }
 
     /** Načíta všetky hodnoty (DP) zariadenia, zoradené podľa čísla DP. */
-    fun readState(network: Network, d: Device): Map<String, Any> = exclusive(d) { readStateOnce(network, d) }
+    fun readState(network: Network, d: Device): Map<String, Any> = exclusive(d) { closeLive(d); readStateOnce(network, d) }
+
+    /** Koľkokrát po sebe zariadenie neposlalo vyžiadané skryté DP (po 3 razoch sa ďalej nepýtame). */
+    private val hiddenMisses = ConcurrentHashMap<String, Int>()
 
     private fun readStateOnce(network: Network, d: Device): Map<String, Any> {
         if (d.ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
+        val hidden = LightChannels.hiddenDps(d).mapNotNull { it.toIntOrNull() }
+        if (hidden.isNotEmpty() && (hiddenMisses[d.devId] ?: 0) < 3) {
+            // skryté DP (napr. 51 mix_rgbcw) zariadenie v bežnom stave neposiela – vyžiadame ich v tom istom spojení
+            val texts = client(network, d).queryWithExtra(arrayOf(hidden.toIntArray()), 900, true)
+            val first = texts.firstOrNull().orEmpty()
+            if (first.isBlank()) throw IOException("Zariadenie neposlalo žiadne dáta")
+            if (LocalDps.parse(first) == null) throw IOException("Neočakávaná odpoveď zariadenia: $first")
+            val merged = LocalDps.merge(texts)
+            if (hidden.any { merged.containsKey(it.toString()) }) hiddenMisses.remove(d.devId) else hiddenMisses.merge(d.devId, 1, Int::plus)
+            return merged
+        }
         val text = client(network, d).query()
         if (text.isBlank()) throw IOException("Zariadenie neposlalo žiadne dáta")
         val json = try {
@@ -84,12 +85,123 @@ object DeviceClient {
         return out.toSortedMap(compareBy<String>({ it.toIntOrNull() ?: Int.MAX_VALUE }, { it }))
     }
 
+    /**
+     * Technické info: stav a potom vyžiada všetky DP 1–255 (UPDATEDPS po skupinách). Vráti všetko, čo zariadenie
+     * poslalo, aj DP mimo popisu z cloudu.
+     */
+    fun probeAll(network: Network, d: Device): Map<String, Any> = exclusive(d) {
+        if (d.ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
+        val groups = LocalDps.PROBE_GROUPS.map { it.toIntArray() }.toTypedArray()
+        LocalDps.merge(client(network, d).queryWithExtra(groups, 1200, false))
+    }
+
+    /**
+     * Sledovanie zmien: drží spojenie otvorené [durationMs] a každé prijaté hlásenie pošle do [onDps].
+     * Výnimky von nepúšťa; [onInfo] dostane stav spojenia.
+     */
+    fun monitor(network: Network, d: Device, durationMs: Long, cancelled: () -> Boolean, onDps: (Map<String, Any>) -> Unit, onInfo: (String) -> Unit) {
+        try {
+            if (d.ip.isBlank()) {
+                onInfo("Zariadenie nemá nastavenú IP adresu")
+                return
+            }
+            val extra = LightChannels.hiddenDps(d).mapNotNull { it.toIntOrNull() }.toIntArray()
+            client(network, d).monitor(extra, durationMs, object : TuyaDevice.MonitorListener {
+                override fun onFrame(cmd: Int, retcode: Int, text: String) {
+                    runCatching {
+                        val dps = LocalDps.parse(text)
+                        if (dps != null && dps.isNotEmpty()) onDps(dps) else if (retcode != 0) onInfo("zariadenie vrátilo kód $retcode")
+                    }
+                }
+
+                override fun onInfo(message: String) {
+                    runCatching { onInfo(message) }
+                }
+            }) { cancelled() }
+        } catch (e: Exception) {
+            runCatching { onInfo("chyba: " + describe(e)) }
+        }
+    }
+
     /** Nastaví jednu alebo viac hodnôt naraz (Boolean, číslo alebo text). */
     fun setValues(network: Network, d: Device, values: Map<String, Any>) {
         if (values.isEmpty()) return
         val json = JSONObject()
         for ((k, v) in values) json.put(k, v)
-        exclusive(d) { client(network, d).setDps(json.toString()) }
+        exclusive(d) { closeLive(d); client(network, d).setDps(json.toString()) }
+    }
+
+    /** Trvalé spojenia pre posuvníky (devId → spojenie, čas posledného použitia). Zatvoria sa po 3 s nečinnosti. */
+    private class LiveConn(val conn: TuyaDevice.Live, @Volatile var used: Long)
+
+    private val liveConns = ConcurrentHashMap<String, LiveConn>()
+    /** Časovač zatvárania nečinných spojení beží len kým je nejaké spojenie otvorené (predtým tikal každú sekundu navždy). */
+    private val timerLock = Any()
+    private var liveTimer: java.util.Timer? = null
+
+    private fun ensureLiveTimer() = synchronized(timerLock) {
+        if (liveTimer != null) return@synchronized
+        liveTimer = java.util.Timer("domov-live-close", true).also { t ->
+            runCatching {
+                t.schedule(object : java.util.TimerTask() {
+                    override fun run() {
+                        runCatching { closeIdleLive() }
+                        stopLiveTimerIfIdle()
+                    }
+                }, 1000, 1000)
+            }
+        }
+    }
+
+    private fun stopLiveTimerIfIdle() = synchronized(timerLock) {
+        if (liveConns.isEmpty()) {
+            liveTimer?.cancel()
+            liveTimer = null
+        }
+    }
+
+    private fun closeIdleLive() {
+        val now = System.currentTimeMillis()
+        liveConns.entries.toList().forEach { (id, c) ->
+            if (now - c.used > 3000) {
+                val lock = locks.getOrPut(id) { Any() }
+                synchronized(lock) {
+                    if (liveConns[id] === c && System.currentTimeMillis() - c.used > 3000) {
+                        liveConns.remove(id)
+                        runCatching { c.conn.close() }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Príkaz počas ťahania posuvníka: cez trvalé spojenie (pri 3.4/3.5 bez nového vyjednávania kľúča). Pri chybe sa
+     * spojenie zavrie a príkaz sa skúsi ešte raz bežným spôsobom. Výnimku vyhodí len vtedy, keď zlyhá aj to.
+     */
+    fun liveSend(network: Network, d: Device, values: Map<String, Any>) {
+        if (values.isEmpty()) return
+        if (d.ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
+        val json = JSONObject()
+        for ((k, v) in values) json.put(k, v)
+        val lock = locks.getOrPut(d.devId) { Any() }
+        synchronized(lock) {
+            try {
+                val c = liveConns[d.devId] ?: LiveConn(client(network, d).openLive(), 0L).also { liveConns[d.devId] = it }
+                c.conn.set(json.toString())
+                c.used = System.currentTimeMillis()
+                ensureLiveTimer()
+                return
+            } catch (e: Exception) {
+                liveConns.remove(d.devId)?.let { runCatching { it.conn.close() } }
+            }
+            client(network, d).setDps(json.toString())
+        }
+    }
+
+    /** Zavrie trvalé spojenie zariadenia (pred bežným čítaním stavu, aby lacné čipy nemali dve spojenia). */
+    fun closeLive(d: Device) {
+        liveConns.remove(d.devId)?.let { runCatching { it.conn.close() } }
     }
 
     /** Dlhší popis chyby pre obrazovku zariadenia. */
@@ -113,13 +225,35 @@ object DeviceClient {
 
 /** Naposledy známe hodnoty zariadení, aby widgety vedeli ukázať stav aj bez pripojenia. */
 object StateCache {
-    private fun prefs(context: Context) =
+    fun prefs(context: Context): android.content.SharedPreferences =
         context.getSharedPreferences("domov_cache", Context.MODE_PRIVATE)
 
-    fun save(context: Context, deviceId: String, values: Map<String, Any>) {
+    /** Odkiaľ je posledný známy stav (zobrazí sa na dlaždici, keď telefón nie je na WiFi). */
+    const val SRC_WIFI = "cez WiFi"
+    const val SRC_AUTO_WIFI = "automatika cez WiFi"
+    const val SRC_AUTO_CLOUD = "automatika cez cloud"
+    const val SRC_MANUAL_WIFI = "ručne cez WiFi"
+    const val SRC_MANUAL_CLOUD = "ručne cez cloud"
+
+    data class Meta(val time: Long, val source: String)
+
+    fun save(context: Context, deviceId: String, values: Map<String, Any>, source: String = SRC_WIFI) {
         val json = JSONObject()
         for ((k, v) in values) json.put(k, v)
-        prefs(context).edit().putString("values_$deviceId", json.toString()).apply()
+        // čas a zdroj v tom istom zápise, aby ich listener (HomeViewModel) videl spolu s hodnotami
+        prefs(context).edit()
+            .putLong("at_$deviceId", System.currentTimeMillis())
+            .putString("src_$deviceId", source)
+            .putString("values_$deviceId", json.toString())
+            .apply()
+    }
+
+    /** Kedy a odkiaľ bol uložený posledný stav (null = zatiaľ nikdy, napr. stav spred verzie 1.17). */
+    fun meta(context: Context, deviceId: String): Meta? {
+        val p = prefs(context)
+        val t = p.getLong("at_$deviceId", 0L)
+        if (t <= 0L) return null
+        return Meta(t, p.getString("src_$deviceId", null) ?: SRC_WIFI)
     }
 
     fun load(context: Context, deviceId: String): Map<String, Any>? {
@@ -138,7 +272,7 @@ object StateCache {
     }
 
     fun remove(context: Context, deviceId: String) {
-        prefs(context).edit().remove("values_$deviceId").apply()
+        prefs(context).edit().remove("values_$deviceId").remove("at_$deviceId").remove("src_$deviceId").apply()
     }
 }
 

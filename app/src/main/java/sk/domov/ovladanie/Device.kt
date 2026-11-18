@@ -23,7 +23,28 @@ data class Device(
     val whiteSwitchDp: String = "",
     /** Svetlo s dvoma zdrojmi: číslo hodnoty vypínača podhľadového (farebného) svetla. */
     val colourSwitchDp: String = "",
+    /** Popis hodnôt z Tuya cloudu (mapping z tinytuya wizardu): číslo DP -> kód, typ, jednotka, rozsah. */
+    val schema: Map<String, DpSchema> = emptyMap(),
+    /** Kategória z Tuya cloudu (napr. „cz“ zásuvka, „wk“ termostat). Prázdne = neznáma. */
+    val category: String = "",
+    /** Vlastná skupina na hlavnej obrazovke (napr. miestnosť). Prázdne = automaticky podľa typu (Svetlá, Zásuvky…). */
+    val group: String = "",
+    /** product_id z Tuya cloudu / devices.json (na technické info). */
+    val productId: String = "",
+    /** Názov produktu / model z Tuya cloudu (product_name / model). */
+    val model: String = "",
+    /** Ručné nastavenie kanálov svetla (LightChannels.ROLE_*): napr. model=mix, mix=51, back_switch=33. */
+    val lightRoles: Map<String, String> = emptyMap(),
 )
+
+internal fun rolesToJson(roles: Map<String, String>): JSONObject = JSONObject().apply { roles.forEach { (k, v) -> put(k, v) } }
+
+internal fun rolesFromJson(o: JSONObject?): Map<String, String> {
+    if (o == null) return emptyMap()
+    val out = LinkedHashMap<String, String>()
+    for (k in o.keys()) o.optString(k).trim().takeIf { it.isNotEmpty() }?.let { out[k] = it }
+    return out
+}
 
 sealed interface DeviceState {
     data object Loading : DeviceState
@@ -45,6 +66,9 @@ private fun readLabels(o: JSONObject): Map<String, String> {
     return labels
 }
 
+private fun readSchema(o: JSONObject): Map<String, DpSchema> =
+    runCatching { Schema.parseMapping(o.optJSONObject("mapping")) }.getOrDefault(emptyMap())
+
 private fun readHidden(o: JSONObject): Set<String> {
     val hiddenArr = o.optJSONArray("hidden") ?: return emptySet()
     return (0 until hiddenArr.length()).map { hiddenArr.getString(it) }.toSet()
@@ -57,26 +81,10 @@ class DeviceStore(context: Context) {
     fun load(): List<Device> {
         val raw = prefs.getString("devices", null) ?: return emptyList()
         return try {
-            val arr = JSONArray(raw)
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                val labels = readLabels(o)
-                val hidden = readHidden(o)
-                Device(
-                    id = o.getString("id"),
-                    name = o.getString("name"),
-                    ip = o.getString("ip"),
-                    devId = o.getString("devId"),
-                    localKey = o.getString("localKey"),
-                    version = o.optString("version", "3.3"),
-                    labels = labels,
-                    hidden = hidden,
-                    powerDp = o.optString("powerDp", ""),
-                    whiteSwitchDp = o.optString("whiteSwitchDp", ""),
-                    colourSwitchDp = o.optString("colourSwitchDp", ""),
-                )
-            }
+            DeviceList.parseStored(raw)
         } catch (e: Exception) {
+            // nečitateľné dáta nezahodíme: odložia sa, aby ich ďalšie uloženie neprepísalo bez stopy
+            prefs.edit().putString("devices_backup", raw).apply()
             emptyList()
         }
     }
@@ -99,6 +107,12 @@ class DeviceStore(context: Context) {
                     .put("powerDp", d.powerDp)
                     .put("whiteSwitchDp", d.whiteSwitchDp)
                     .put("colourSwitchDp", d.colourSwitchDp)
+                    .put("category", d.category)
+                    .put("group", d.group)
+                    .put("productId", d.productId)
+                    .put("model", d.model)
+                    .apply { if (d.lightRoles.isNotEmpty()) put("lightRoles", rolesToJson(d.lightRoles)) }
+                    .apply { if (d.schema.isNotEmpty()) put("mapping", Schema.toJson(d.schema)) }
             )
         }
         prefs.edit().putString("devices", arr.toString()).apply()
@@ -114,6 +128,10 @@ fun powerDpOf(device: Device, values: Map<String, Any>): String? {
     Light.detect(values)?.let { return it.power }
     // fritéza: hlavný vypínač je len hodnota 1; štart/stop (2) nesmie byť hlavný vypínač, inak by widget spúšťal ohrev
     Fryer.detect(values)?.let { return it.power }
+    // podľa popisu z Tuya cloudu (kód switch, switch_1…)
+    Schema.powerDp(device.schema, values)?.let { return it }
+    // rolety nemajú vypínač; ich hodnoty zapnuté/vypnuté (napr. opačný smer motora) nie sú hlavný vypínač
+    if (device.schema.isNotEmpty() && Templates.detect(values, device.schema, device.category) is CoverTemplate) return null
     // vypínače sekcií svetla s dvoma zdrojmi nie sú hlavný vypínač
     val sectionSwitches = setOf(device.whiteSwitchDp.trim(), device.colourSwitchDp.trim())
     return values.entries.firstOrNull { it.value is Boolean && it.key !in sectionSwitches }?.key
@@ -141,9 +159,9 @@ fun parseHidden(text: String): Set<String> =
 
 /**
  * Export všetkých zariadení do JSON. Formát je rovnaký ako devices.json z tinytuya
- * (name, id, key, ip, ver), plus voliteľné labels, hidden a powerDp. Importuje sa naspäť cez Import.
+ * (name, id, key, ip, ver, category, mapping), plus voliteľné labels, hidden a powerDp. Importuje sa naspäť cez Import.
  */
-fun exportDevicesJson(devices: List<Device>): String {
+fun exportDevicesJson(devices: List<Device>, householdKey: String? = null): String {
     val arr = JSONArray()
     devices.forEach { d ->
         val o = JSONObject()
@@ -161,36 +179,128 @@ fun exportDevicesJson(devices: List<Device>): String {
         if (d.powerDp.isNotBlank()) o.put("powerDp", d.powerDp)
         if (d.whiteSwitchDp.isNotBlank()) o.put("whiteSwitchDp", d.whiteSwitchDp)
         if (d.colourSwitchDp.isNotBlank()) o.put("colourSwitchDp", d.colourSwitchDp)
+        if (d.category.isNotBlank()) o.put("category", d.category)
+        if (d.group.isNotBlank()) o.put("group", d.group)
+        if (d.productId.isNotBlank()) o.put("product_id", d.productId)
+        if (d.model.isNotBlank()) o.put("product_name", d.model)
+        if (d.lightRoles.isNotEmpty()) o.put("lightRoles", rolesToJson(d.lightRoles))
+        if (d.schema.isNotEmpty()) o.put("mapping", Schema.toJson(d.schema))
         arr.put(o)
     }
+    // kľúč domácnosti (automatika pre viac telefónov); prvok nemá „id“, import zariadení ho preskočí
+    if (!householdKey.isNullOrBlank()) arr.put(HouseholdCrypto.exportEntry(householdKey))
     return arr.toString(2)
 }
 
 /**
  * Import zo súboru devices.json, ktorý vytvorí `python -m tinytuya wizard`, alebo z exportu tejto appky.
- * Očakáva pole objektov s poľami name, id, key a voliteľne ip, ver/version, labels, hidden, powerDp.
+ * Očakáva pole objektov s poľami name, id, key a voliteľne ip, ver/version, labels, hidden, powerDp,
+ * category a mapping (popis hodnôt z Tuya cloudu, tinytuya ho uloží, keď vo wizarde odpovieš áno na „Download DP Name mappings?“).
  */
 fun parseTinytuyaJson(text: String): List<Device> {
     val arr = JSONArray(text.trim())
     val result = mutableListOf<Device>()
     for (i in 0 until arr.length()) {
-        val o = arr.getJSONObject(i)
+        val o = arr.optJSONObject(i) ?: continue
         val id = o.optString("id")
         val key = o.optString("key")
         if (id.isBlank() || key.length != 16) continue
-        val ver = o.optString("ver", o.optString("version", "3.3")).ifBlank { "3.3" }
+        // prázdna verzia = devices.json ju nemá; pri importe sa potom ponechá pôvodná (alebo 3.3 pri novom zariadení)
+        val ver = o.optString("ver", o.optString("version", "")).trim()
         result += Device(
             name = o.optString("name", id).ifBlank { id },
             ip = o.optString("ip", ""),
             devId = id,
             localKey = key,
-            version = if (ver in listOf("3.3", "3.4", "3.5")) ver else "3.3",
+            version = if (ver in listOf("3.3", "3.4", "3.5")) ver else "",
             labels = readLabels(o),
             hidden = readHidden(o),
             powerDp = o.optString("powerDp", ""),
             whiteSwitchDp = o.optString("whiteSwitchDp", ""),
             colourSwitchDp = o.optString("colourSwitchDp", ""),
+            schema = readSchema(o),
+            category = o.optString("category", ""),
+            group = o.optString("group", "").trim(),
+            productId = o.optString("product_id", o.optString("productId", "")).trim(),
+            model = o.optString("product_name", o.optString("model", "")).trim(),
+            lightRoles = rolesFromJson(o.optJSONObject("lightRoles")),
         )
     }
     return result
 }
+
+/**
+ * Zlúči importované zariadenia so zoznamom v appke. Zariadenie s rovnakým Device ID sa aktualizuje: zostane jeho
+ * interné id a názov; local key, verzia, IP, popis hodnôt (mapping) a kategória sa prevezmú z importu, ak ich má.
+ * Vlastné názvy hodnôt, skryté hodnoty a vypínače zostanú, ak ich import neobsahuje.
+ */
+fun mergeImported(current: List<Device>, imported: List<Device>): List<Device> {
+    var list = current
+    imported.forEach { new ->
+        val existing = list.find { it.devId == new.devId }
+        list = if (existing == null) {
+            list + new.copy(version = new.version.ifBlank { "3.3" })
+        } else {
+            list.map {
+                if (it.devId == new.devId) it.copy(
+                    localKey = new.localKey,
+                    version = new.version.ifBlank { it.version },
+                    ip = new.ip.ifBlank { it.ip },
+                    labels = if (new.labels.isNotEmpty()) new.labels else it.labels,
+                    hidden = if (new.hidden.isNotEmpty()) new.hidden else it.hidden,
+                    powerDp = new.powerDp.ifBlank { it.powerDp },
+                    whiteSwitchDp = new.whiteSwitchDp.ifBlank { it.whiteSwitchDp },
+                    colourSwitchDp = new.colourSwitchDp.ifBlank { it.colourSwitchDp },
+                    schema = if (new.schema.isNotEmpty()) new.schema else it.schema,
+                    category = new.category.ifBlank { it.category },
+                    group = new.group.ifBlank { it.group },
+                    productId = new.productId.ifBlank { it.productId },
+                    model = new.model.ifBlank { it.model },
+                    lightRoles = if (new.lightRoles.isNotEmpty()) new.lightRoles else it.lightRoles,
+                ) else it
+            }
+        }
+    }
+    return list
+}
+
+/**
+ * Aktualizácia zariadení podľa Tuya cloudu (Synchronizovať): podľa Device ID doplní nový local key (napr. po
+ * opätovnom spárovaní), popis hodnôt a kategóriu. Názov, IP, verzia, vlastné názvy hodnôt, skryté hodnoty a
+ * vypínače zostanú. Vráti nový zoznam a názvy zariadení, ktoré sa zmenili.
+ */
+fun mergeCloud(
+    current: List<Device>,
+    cloud: List<CloudDevice>,
+    mappings: Map<String, Map<String, DpSchema>>,
+): Pair<List<Device>, List<String>> {
+    val byId = cloud.associateBy { it.id }
+    val changed = mutableListOf<String>()
+    val list = current.map { d ->
+        val c = byId[d.devId] ?: return@map d
+        val schema = mappings[d.devId]?.takeIf { it.isNotEmpty() } ?: d.schema
+        val updated = d.copy(
+            localKey = c.localKey.takeIf { it.length == 16 } ?: d.localKey,
+            schema = schema,
+            category = c.category.ifBlank { d.category },
+            productId = c.productId.ifBlank { d.productId },
+            model = c.productName.ifBlank { d.model },
+        )
+        if (updated != d) changed += d.name
+        updated
+    }
+    return list to changed
+}
+
+/** Nové zariadenie z Tuya cloudu; IP a verzia z hľadania v sieti, ak sa našlo. */
+fun deviceFromCloud(c: CloudDevice, schema: Map<String, DpSchema>, found: FoundDevice?): Device = Device(
+    name = c.name,
+    ip = found?.ip.orEmpty(),
+    devId = c.id,
+    localKey = c.localKey,
+    version = found?.version?.takeIf { it in SUPPORTED_VERSIONS } ?: "3.3",
+    schema = schema,
+    category = c.category,
+    productId = c.productId,
+    model = c.productName,
+)

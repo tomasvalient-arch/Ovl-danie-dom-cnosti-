@@ -20,9 +20,49 @@ data class LightSpec(
     val bright: String,
     val temp: String?,
     val color: String?,
+    /** Rozsah jasu zo schémy (Tuya cloud); -1 = podľa formátu (V2 10–1000, V1 25–255). */
+    val brightMinRaw: Int = -1,
+    val brightMaxRaw: Int = -1,
+    /** Najvyššia hodnota teploty bielej zo schémy; -1 = podľa formátu (V2 1000, V1 255). */
+    val tempMaxRaw: Int = -1,
 ) {
     /** Tieto čísla hodnôt rieši ovládanie svetla, ostatné sú v „Všetky hodnoty“. */
     val handled: Set<String> get() = setOfNotNull(power, mode, bright, temp, color)
+
+    val brightMin: Int get() = if (brightMinRaw >= 0 && brightMaxRaw > brightMinRaw) brightMinRaw else if (format == LightFormat.V2) 10 else 25
+    val brightMax: Int get() = if (brightMinRaw >= 0 && brightMaxRaw > brightMinRaw) brightMaxRaw else if (format == LightFormat.V2) 1000 else 255
+    val tempMax: Int get() = if (tempMaxRaw > 0) tempMaxRaw else if (format == LightFormat.V2) 1000 else 255
+}
+
+/**
+ * Jeden spoločný prepočet jasu medzi hodnotou zariadenia a percentami (kruh, posuvník, dlaždica, widget, scény).
+ * Lineárne v rozsahu zo schémy: najnižšia hodnota = 1 %, najvyššia = 100 % (ako Tuya appka: 10 z 10–1000 = 1 %,
+ * 25 z 25–255 = 1 %). Pri 10–1000 je to presne hodnota / 10, pri rozsahu od 0 hodnota / max. Prepočet tam a späť
+ * je presný (1 % → min → 1 %).
+ */
+object Bright {
+    fun percent(raw: Number?, min: Int, max: Int, default: Int = 100): Int {
+        val r = raw?.toDouble() ?: return default
+        if (max <= min) return if (max > 0) (r * 100.0 / max).roundToInt().coerceIn(1, 100) else default
+        // rozsah od 0 (napr. 0–1000): jednoducho hodnota / max (500 = 50 %), najmenej 1 %
+        if (min <= 0) return (r * 100.0 / max).roundToInt().coerceIn(1, 100)
+        return (1 + (r - min) * 99.0 / (max - min)).roundToInt().coerceIn(1, 100)
+    }
+
+    fun raw(percent: Int, min: Int, max: Int): Int {
+        val p = percent.coerceIn(1, 100)
+        if (max <= min) return max
+        if (min <= 0) return (p * max / 100.0).roundToInt().coerceIn(maxOf(min, 1), max)
+        return (min + (p - 1) * (max - min) / 99.0).roundToInt().coerceIn(min, max)
+    }
+
+    /** Rozsah hodnoty zo schémy (min, max), alebo null, ak ho schéma nemá. */
+    fun range(schema: Map<String, DpSchema>, dp: String?): Pair<Int, Int>? {
+        val s = schema[dp ?: return null] ?: return null
+        val min = s.min?.toInt() ?: return null
+        val max = s.max?.toInt() ?: return null
+        return if (max > min) min to max else null
+    }
 }
 
 /**
@@ -71,6 +111,15 @@ object Light {
         x is String && (x == "white" || x == "colour" || x == "color" || x == "music" || x.startsWith("scene"))
 
     /** Pozná svetlo podľa toho, aké hodnoty zariadenie vracia. Ak nesedí ani V2 ani V1, vráti null. */
+    /** Ako [detect], ale rozsah jasu a teploty vezme zo schémy z Tuya cloudu (ak ju zariadenie má). */
+    fun detect(values: Map<String, Any>, schema: Map<String, DpSchema>): LightSpec? {
+        val spec = detect(values) ?: return null
+        if (schema.isEmpty()) return spec
+        val b = Bright.range(schema, spec.bright)
+        val t = schema[spec.temp ?: ""]?.max?.toInt()?.takeIf { it > 0 }
+        return spec.copy(brightMinRaw = b?.first ?: -1, brightMaxRaw = b?.second ?: -1, tempMaxRaw = t ?: -1)
+    }
+
     fun detect(values: Map<String, Any>): LightSpec? {
         if (values["20"] is Boolean && isMode(values["21"]) && values["22"] is Number) {
             return LightSpec(
@@ -114,7 +163,7 @@ object Light {
     }
 
     fun readDual(spec: DualSpec, values: Map<String, Any>): DualState {
-        val percent = (((values[spec.bright] as? Number)?.toDouble() ?: 1000.0) / 10.0).roundToInt().coerceIn(1, 100)
+        val percent = Bright.percent(values[spec.bright] as? Number, 10, 1000)
         val temp = (((values[spec.temp] as? Number)?.toDouble() ?: 0.0) / 1000.0).toFloat().coerceIn(0f, 1f)
         val colour = parseColor(LightFormat.V2, values[spec.colour] as? String)
         return DualState(
@@ -127,7 +176,7 @@ object Light {
     }
 
     fun dualWhiteBrightness(spec: DualSpec, percent: Int): Map<String, Any> =
-        mapOf(spec.bright to max(10, percent.coerceIn(1, 100) * 10))
+        mapOf(spec.bright to Bright.raw(percent, 10, 1000))
 
     fun dualTemp(spec: DualSpec, temp: Float): Map<String, Any> =
         mapOf(spec.temp to (temp.coerceIn(0f, 1f) * 1000f).roundToInt())
@@ -138,13 +187,11 @@ object Light {
     // ------------------------------------------------------------ čítanie stavu
 
     fun read(spec: LightSpec, values: Map<String, Any>): LightState {
-        val v2 = spec.format == LightFormat.V2
         val on = values[spec.power] == true
         val mode = (values[spec.mode] as? String) ?: "white"
-        val rawBright = (values[spec.bright] as? Number)?.toDouble() ?: (if (v2) 1000.0 else 255.0)
-        val percent = (if (v2) rawBright / 10.0 else rawBright * 100.0 / 255.0).roundToInt().coerceIn(1, 100)
+        val percent = Bright.percent(values[spec.bright] as? Number, spec.brightMin, spec.brightMax)
         val rawTemp = (values[spec.temp ?: ""] as? Number)?.toDouble() ?: 0.0
-        val temp = (rawTemp / (if (v2) 1000.0 else 255.0)).toFloat().coerceIn(0f, 1f)
+        val temp = (rawTemp / spec.tempMax).toFloat().coerceIn(0f, 1f)
         val color = parseColor(spec.format, values[spec.color ?: ""] as? String)
         return LightState(on, mode, percent, temp, color)
     }
@@ -170,15 +217,14 @@ object Light {
     /** Zmení jas bieleho svetla (1–100 %) a prepne na bielu. */
     fun whiteBrightness(spec: LightSpec, percent: Int): Map<String, Any> {
         val p = percent.coerceIn(1, 100)
-        val raw = if (spec.format == LightFormat.V2) max(10, p * 10) else max(25, (p * 255.0 / 100.0).roundToInt())
-        return mapOf(spec.mode to "white", spec.bright to raw)
+        return mapOf(spec.mode to "white", spec.bright to Bright.raw(p, spec.brightMin, spec.brightMax))
     }
 
     /** Zmení teplotu bieleho svetla (0 = teplá, 1 = studená) a prepne na bielu. */
     fun whiteTemp(spec: LightSpec, temp: Float): Map<String, Any> {
         val key = spec.temp ?: return emptyMap()
         val t = temp.coerceIn(0f, 1f)
-        val raw = (t * (if (spec.format == LightFormat.V2) 1000f else 255f)).roundToInt()
+        val raw = (t * spec.tempMax).roundToInt()
         return mapOf(spec.mode to "white", key to raw)
     }
 

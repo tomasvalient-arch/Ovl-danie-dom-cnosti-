@@ -8,12 +8,15 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.zip.CRC32;
 
 import javax.crypto.Cipher;
@@ -47,6 +50,9 @@ public final class TuyaDevice {
     private static final int CMD_QUERY = 0x0A;
     private static final int CMD_CONTROL_NEW = 0x0D;
     private static final int CMD_QUERY_NEW = 0x10;
+    private static final int CMD_HEART_BEAT = 0x09;
+    /** FRM_LAN_QUERY_DP – požiadavka, aby zariadenie poslalo aktuálne hodnoty vybraných DP (tinytuya updatedps). */
+    private static final int CMD_UPDATEDPS = 0x12;
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -93,23 +99,191 @@ public final class TuyaDevice {
         }
     }
 
+    /**
+     * Stav ako {@link #query()} a potom v tom istom spojení vyžiada ďalšie DP (UPDATEDPS, ako tinytuya updatedps).
+     * Niektoré DP (napr. raw DP 51 mix_rgbcw) zariadenie v bežnom stave neposiela. Pre každú skupinu [groups]
+     * pošle jednu požiadavku a [waitMs] zbiera hlásenia (pri [stopOnFirst] skončí pri prvom hlásení).
+     * Vráti texty všetkých rámcov; prvý je odpoveď na stav. Chyba pri dodatočnom vyžiadaní sa ignoruje.
+     */
+    public List<String> queryWithExtra(int[][] groups, long waitMs, boolean stopOnFirst) throws IOException {
+        try (Session s = new Session()) {
+            List<String> out = new ArrayList<>();
+            String json = "{\"gwId\":\"" + devId + "\",\"devId\":\"" + devId + "\",\"uid\":\"" + devId
+                    + "\",\"t\":\"" + now() + "\"}";
+            s.send(proto >= 34 ? CMD_QUERY_NEW : CMD_QUERY, json.getBytes(StandardCharsets.UTF_8), false);
+            out.add(text(s.await(CMD_QUERY, CMD_QUERY_NEW, CMD_STATUS)));
+            if (groups == null) {
+                return out;
+            }
+            try {
+                for (int[] g : groups) {
+                    if (g == null || g.length == 0) {
+                        continue;
+                    }
+                    s.send(CMD_UPDATEDPS, updateJson(g), false);
+                    long end = System.currentTimeMillis() + waitMs;
+                    while (true) {
+                        long left = end - System.currentTimeMillis();
+                        if (left <= 0) {
+                            break;
+                        }
+                        Frame f = s.poll((int) Math.max(50, left));
+                        if (f == null) {
+                            break;
+                        }
+                        String t = f.retcode == 0 ? text(f) : "";
+                        if (!t.isEmpty() && t.contains("dps")) {
+                            out.add(t);
+                            if (stopOnFirst) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (IOException | RuntimeException ignored) {
+                // zariadenie UPDATEDPS nepodporuje alebo zavrelo spojenie – stav z query stačí
+            }
+            return out;
+        }
+    }
+
+    /** Prijatý rámec pri sledovaní zmien. */
+    public interface MonitorListener {
+        /** Rámec s dátami (stav alebo hlásenie zmeny); [text] je dešifrovaný JSON. */
+        void onFrame(int cmd, int retcode, String text);
+
+        /** Stav spojenia (pripojené, odpojené, chyba) – na zobrazenie v logu. */
+        void onInfo(String message);
+    }
+
+    /** Či sa má sledovanie zastaviť. */
+    public interface Cancel {
+        boolean isCancelled();
+    }
+
+    /**
+     * Drží spojenie otvorené a hlási každý prijatý rámec (stav aj zmeny, ktoré zariadenie samo pošle, napr. keď ho
+     * niekto ovláda z Tuya appky). Raz za ~9 s pošle heartbeat. Pri výpadku sa znova pripojí. Skončí po [durationMs]
+     * alebo keď [cancel] vráti true. Výnimky von nepúšťa (chyby hlási cez onInfo).
+     */
+    public void monitor(int[] extraDps, long durationMs, MonitorListener listener, Cancel cancel) {
+        long end = System.currentTimeMillis() + durationMs;
+        while (!cancel.isCancelled() && System.currentTimeMillis() < end) {
+            try (Session s = new Session()) {
+                listener.onInfo("pripojené");
+                String q = "{\"gwId\":\"" + devId + "\",\"devId\":\"" + devId + "\",\"uid\":\"" + devId
+                        + "\",\"t\":\"" + now() + "\"}";
+                s.send(proto >= 34 ? CMD_QUERY_NEW : CMD_QUERY, q.getBytes(StandardCharsets.UTF_8), false);
+                if (extraDps != null && extraDps.length > 0) {
+                    s.send(CMD_UPDATEDPS, updateJson(extraDps), false);
+                }
+                long lastHb = System.currentTimeMillis();
+                byte[] hb = ("{\"gwId\":\"" + devId + "\",\"devId\":\"" + devId + "\"}").getBytes(StandardCharsets.UTF_8);
+                while (!cancel.isCancelled() && System.currentTimeMillis() < end) {
+                    Frame f = s.poll(1000);
+                    if (System.currentTimeMillis() - lastHb > 9000) {
+                        s.send(CMD_HEART_BEAT, hb, false);
+                        lastHb = System.currentTimeMillis();
+                    }
+                    if (f == null || f.cmd == CMD_HEART_BEAT) {
+                        continue;
+                    }
+                    String t = text(f);
+                    if (!t.isEmpty() || f.retcode != 0) {
+                        listener.onFrame(f.cmd, f.retcode, t);
+                    }
+                }
+            } catch (IOException | RuntimeException e) {
+                listener.onInfo("spojenie prerušené: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+                long wait = System.currentTimeMillis() + 2000;
+                while (!cancel.isCancelled() && System.currentTimeMillis() < wait && System.currentTimeMillis() < end) {
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private static byte[] updateJson(int[] dps) {
+        StringBuilder b = new StringBuilder("{\"dpId\":[");
+        for (int i = 0; i < dps.length; i++) {
+            if (i > 0) {
+                b.append(',');
+            }
+            b.append(dps[i]);
+        }
+        return b.append("]}").toString().getBytes(StandardCharsets.UTF_8);
+    }
+
     /** Nastaví datapointy, napr. dpsJson = {"1":true}. Vráti odpoveď zariadenia (často prázdnu). */
     public String setDps(String dpsJson) throws IOException {
         try (Session s = new Session()) {
-            String json;
-            int cmd;
-            if (proto >= 34) {
-                cmd = CMD_CONTROL_NEW;
-                json = "{\"data\":{\"ctype\":0,\"devId\":\"" + devId + "\",\"gwId\":\"" + devId
-                        + "\",\"uid\":\"\",\"dps\":" + dpsJson + "},\"protocol\":5,\"t\":" + now() + "}";
-            } else {
-                cmd = CMD_CONTROL;
-                json = "{\"devId\":\"" + devId + "\",\"uid\":\"" + devId + "\",\"t\":\"" + now()
-                        + "\",\"dps\":" + dpsJson + "}";
-            }
-            s.send(cmd, json.getBytes(StandardCharsets.UTF_8), true);
+            s.send(controlCmd(), controlJson(dpsJson), true);
             Frame f = s.await(CMD_CONTROL, CMD_CONTROL_NEW, CMD_STATUS);
             return text(f);
+        }
+    }
+
+    private int controlCmd() {
+        return proto >= 34 ? CMD_CONTROL_NEW : CMD_CONTROL;
+    }
+
+    private byte[] controlJson(String dpsJson) {
+        String json;
+        if (proto >= 34) {
+            json = "{\"data\":{\"ctype\":0,\"devId\":\"" + devId + "\",\"gwId\":\"" + devId
+                    + "\",\"uid\":\"\",\"dps\":" + dpsJson + "},\"protocol\":5,\"t\":" + now() + "}";
+        } else {
+            json = "{\"devId\":\"" + devId + "\",\"uid\":\"" + devId + "\",\"t\":\"" + now()
+                    + "\",\"dps\":" + dpsJson + "}";
+        }
+        return json.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** Otvorí trvalé spojenie na rýchle posielanie príkazov počas ťahania posuvníka (3.4/3.5 bez nového vyjednávania). */
+    public Live openLive() throws IOException {
+        return new Live();
+    }
+
+    /** Trvalé spojenie: {@link #set} pošle príkaz a krátko počká na potvrdenie. Nie je vláknovo bezpečné. */
+    public final class Live implements Closeable {
+        private final Session s = new Session();
+
+        Live() throws IOException {
+        }
+
+        /** Pošle dps. Staré hlásenia v spojení zahodí; na potvrdenie čaká najviac 400 ms (bez neho to nie je chyba). */
+        public void set(String dpsJson) throws IOException {
+            while (s.poll(1) != null) {
+                // zahodiť nahromadené hlásenia
+            }
+            s.send(controlCmd(), controlJson(dpsJson), true);
+            long end = System.currentTimeMillis() + 400;
+            while (true) {
+                long left = end - System.currentTimeMillis();
+                if (left <= 0) {
+                    return;
+                }
+                Frame f = s.poll((int) left);
+                if (f == null) {
+                    return;
+                }
+                if (f.retcode != 0) {
+                    throw new DeviceException(f.retcode);
+                }
+                if (f.cmd == CMD_CONTROL || f.cmd == CMD_CONTROL_NEW) {
+                    return;
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            s.close();
         }
     }
 
@@ -173,6 +347,27 @@ public final class TuyaDevice {
             byte[] frame = buildFrame(seq++, cmd, plain, withHeader, key);
             out.write(frame);
             out.flush();
+        }
+
+        /**
+         * Počká najviac [timeoutMs] na začiatok ďalšieho rámca; ak nepríde, vráti null. Zvyšok rámca sa číta
+         * s bežným timeoutom, aby sa rámec nikdy neprečítal len napoly.
+         */
+        Frame poll(int timeoutMs) throws IOException {
+            socket.setSoTimeout(timeoutMs);
+            try {
+                in.mark(1);
+                int b = in.read();
+                if (b < 0) {
+                    throw new EOFException("Zariadenie zavrelo spojenie");
+                }
+                in.reset();
+            } catch (SocketTimeoutException e) {
+                return null;
+            } finally {
+                socket.setSoTimeout(READ_TIMEOUT_MS);
+            }
+            return readFrame(key, false);
         }
 
         /** Čaká na rámec s jedným z očakávaných príkazov, ostatné (heartbeat a pod.) preskočí. */

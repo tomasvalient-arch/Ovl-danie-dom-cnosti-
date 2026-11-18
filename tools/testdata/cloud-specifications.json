@@ -1,0 +1,89 @@
+{
+ "result": {
+  "category": "cz",
+  "functions": [
+   {
+    "code": "switch_1",
+    "dp_id": 1,
+    "type": "Boolean",
+    "values": "{}"
+   },
+   {
+    "code": "countdown_1",
+    "dp_id": 9,
+    "type": "Integer",
+    "values": "{\"unit\":\"s\",\"min\":0,\"max\":86400,\"scale\":0,\"step\":1}"
+   },
+   {
+    "code": "relay_status",
+    "dp_id": 38,
+    "type": "Enum",
+    "values": "{\"range\":[\"power_off\",\"power_on\",\"last\"]}"
+   },
+   {
+    "code": "cycle_time",
+    "dp_id": 42,
+    "type": "String",
+    "values": ""
+   }
+  ],
+  "status": [
+   {
+    "code": "switch_1",
+    "dp_id": 1,
+    "type": "Boolean",
+    "values": "{}"
+   },
+   {
+    "code": "countdown_1",
+    "dp_id": 9,
+    "type": "Integer",
+    "values": "{\"unit\":\"s\",\"min\":0,\"max\":86400,\"scale\":0,\"step\":1}"
+   },
+   {
+    "code": "add_ele",
+    "dp_id": 17,
+    "type": "Integer",
+    "values": "{\"unit\":\"kwh\",\"min\":0,\"max\":50000,\"scale\":3,\"step\":100}"
+   },
+   {
+    "code": "cur_current",
+    "dp_id": 18,
+    "type": "Integer",
+    "values": "{\"unit\":\"mA\",\"min\":0,\"max\":30000,\"scale\":0,\"step\":1}"
+   },
+   {
+    "code": "cur_power",
+    "dp_id": 19,
+    "type": "Integer",
+    "values": "{\"unit\":\"W\",\"min\":0,\"max\":50000,\"scale\":1,\"step\":1}"
+   },
+   {
+    "code": "cur_voltage",
+    "dp_id": 20,
+    "type": "Integer",
+    "values": "{\"unit\":\"V\",\"min\":0,\"max\":5000,\"scale\":1,\"step\":1}"
+   },
+   {
+    "code": "temp_current",
+    "dp_id": 24,
+    "type": "Integer",
+    "values": "{\"unit\":\"℃\",\"min\":-20,\"max\":100,\"scale\":0,\"step\":1}"
+   },
+   {
+    "code": "fault",
+    "dp_id": 26,
+    "type": "Bitmap",
+    "values": "{\"label\":[\"ov_cr\",\"ov_vol\"]}"
+   },
+   {
+    "code": "schedule",
+    "dp_id": 30,
+    "type": "Json",
+    "values": "{\"a\":1}"
+   }
+  ]
+ },
+ "success": true,
+ "t": 1700000000000
+}

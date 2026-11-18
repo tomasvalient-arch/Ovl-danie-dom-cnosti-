@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="domov_bg">#131110</color>
+    <color name="domov_accent">#FFB95C</color>
+    <color name="widget_text">#EDE0D6</color>
+    <color name="widget_text_muted">#C4B5A8</color>
+    <color name="widget_text_on">#FFF1E2</color>
+    <color name="widget_text_on_muted">#FFD8A8</color>
+    <color name="widget_icon_on">#FFB95C</color>
+    <color name="widget_icon_off">#C4B5A8</color>
+    <color name="widget_error">#FFB4AB</color>
+</resources>

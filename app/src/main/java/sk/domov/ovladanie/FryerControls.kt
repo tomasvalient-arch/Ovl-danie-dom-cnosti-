@@ -106,6 +106,7 @@ fun FryerControls(
                     enabled = enabled,
                     valueText = { "${it.roundToInt()} min" },
                     onFinished = { onCommand(Fryer.cookTime(spec, it)) },
+                    onLive = liveOf { m: Float -> Fryer.cookTime(spec, m) },
                     steps = Fryer.TIME_MAX - Fryer.TIME_MIN - 1,
                 )
                 LabeledSlider(
@@ -115,6 +116,7 @@ fun FryerControls(
                     enabled = enabled,
                     valueText = { "${((it / Fryer.TEMP_STEP).roundToInt() * Fryer.TEMP_STEP)} °C" },
                     onFinished = { onCommand(Fryer.temperature(spec, it)) },
+                    onLive = liveOf { t: Float -> Fryer.temperature(spec, t) },
                     steps = (Fryer.TEMP_MAX - Fryer.TEMP_MIN) / Fryer.TEMP_STEP - 1,
                 )
             }

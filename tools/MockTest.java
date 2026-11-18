@@ -15,6 +15,13 @@ import sk.domov.ovladanie.tuya.TuyaDevice;
 public class MockTest {
     static final byte[] LOCAL_KEY = "0123456789abcdef".getBytes();
     static volatile boolean state = false;
+    /** Po odpovedi na stav pošle o chvíľu samo hlásenie zmeny (test sledovania zmien). */
+    static volatile boolean pushOnQuery = false;
+
+    static byte[] statusJson(String ver, String dps) {
+        return (ver.equals("3.3") ? "{\"devId\":\"dev123\",\"dps\":" + dps + ",\"t\":1}"
+                : "{\"protocol\":4,\"t\":1,\"data\":{\"dps\":" + dps + "}}").getBytes();
+    }
 
     static byte[] hmac(byte[] k, byte[] d) throws Exception {
         Mac m = Mac.getInstance("HmacSHA256"); m.init(new SecretKeySpec(k, "HmacSHA256")); return m.doFinal(d);
@@ -95,6 +102,16 @@ public class MockTest {
                     reply = (ver.equals("3.3") ? "{\"devId\":\"dev123\",\"dps\":" + dps + "}"
                             : "{\"protocol\":4,\"t\":1,\"data\":{\"dps\":" + dps + "}}").getBytes();
                     send(out, ver, seq, cmd, reply, key, false);
+                    if (pushOnQuery) {
+                        Thread.sleep(300);
+                        send(out, ver, 0, 0x08, statusJson(ver, "{\"20\":false}"), key, false);
+                    }
+                } else if (cmd == 0x12) { // UPDATEDPS: prázdne potvrdenie a potom hlásenie vyžiadaných DP
+                    if (!json.contains("\"dpId\":[51")) throw new RuntimeException("updatedps json " + json);
+                    send(out, ver, seq, cmd, new byte[0], key, false);
+                    send(out, ver, 0, 0x08, statusJson(ver, "{\"51\":\"AAcAeAPoA+gALQAA\"}"), key, false);
+                } else if (cmd == 0x09) { // heartbeat
+                    send(out, ver, seq, cmd, new byte[0], key, false);
                 } else if (cmd == 0x07 || cmd == 0x0D) {
                     Matcher m = Pattern.compile("\"dps\":\\{\"1\":(true|false)\\}").matcher(json);
                     if (!m.find()) throw new RuntimeException("control json " + json);
@@ -153,6 +170,61 @@ public class MockTest {
             } catch (Exception e) {
                 e.printStackTrace(); failures++;
                 System.out.println(ver + ": CHYBA " + e);
+            }
+        }
+        // vyžiadanie skrytých DP (UPDATEDPS) a sledovanie zmien
+        for (String ver : new String[]{"3.3", "3.4", "3.5"}) {
+            try (ServerSocket ss = new ServerSocket(0)) {
+                Thread t = new Thread(() -> {
+                    for (int i = 0; i < 2; i++) {
+                        try { serve(ss, ver); } catch (Exception e) { e.printStackTrace(); return; }
+                    }
+                });
+                t.setDaemon(true); t.start();
+                pushOnQuery = false;
+                TuyaDevice d = new TuyaDevice("127.0.0.1", ss.getLocalPort(), "dev123", "0123456789abcdef", ver, null);
+                java.util.List<String> frames = d.queryWithExtra(new int[][]{{51, 52, 53}}, 1500, true);
+                boolean ok1 = frames.size() == 2 && frames.get(0).contains("\"2\":100") && frames.get(1).contains("AAcAeAPoA+gALQAA");
+                System.out.println(ver + " UPDATEDPS: " + (ok1 ? "OK" : "CHYBA " + frames));
+                if (!ok1) failures++;
+                pushOnQuery = true;
+                java.util.List<String> got = new java.util.ArrayList<>();
+                long t0 = System.currentTimeMillis();
+                d.monitor(null, 4000, new TuyaDevice.MonitorListener() {
+                    public void onFrame(int cmd, int retcode, String text) { synchronized (got) { got.add(cmd + ":" + text); } }
+                    public void onInfo(String message) { }
+                }, () -> { synchronized (got) { return got.size() >= 2; } });
+                pushOnQuery = false;
+                boolean ok2 = got.size() >= 2 && got.get(1).startsWith("8:") && got.get(1).contains("\"20\":false")
+                        && System.currentTimeMillis() - t0 < 3500;
+                System.out.println(ver + " sledovanie zmien: " + (ok2 ? "OK" : "CHYBA " + got));
+                if (!ok2) failures++;
+            } catch (Exception e) {
+                e.printStackTrace(); failures++;
+                System.out.println(ver + " UPDATEDPS/sledovanie: CHYBA " + e);
+            }
+        }
+        // trvalé spojenie pre posuvníky: viac príkazov jedným spojením
+        for (String ver : new String[]{"3.3", "3.4", "3.5"}) {
+            try (ServerSocket ss = new ServerSocket(0)) {
+                Thread t = new Thread(() -> { try { serve(ss, ver); } catch (Exception e) { e.printStackTrace(); } });
+                t.setDaemon(true); t.start();
+                state = false;
+                TuyaDevice d = new TuyaDevice("127.0.0.1", ss.getLocalPort(), "dev123", "0123456789abcdef", ver, null);
+                long t0 = System.currentTimeMillis();
+                try (TuyaDevice.Live live = d.openLive()) {
+                    live.set("{\"1\":true}");
+                    boolean a = state;
+                    live.set("{\"1\":false}");
+                    boolean b = state;
+                    live.set("{\"1\":true}");
+                    boolean ok = a && !b && state && System.currentTimeMillis() - t0 < 1500;
+                    System.out.println(ver + " trvalé spojenie (3 príkazy, " + (System.currentTimeMillis() - t0) + " ms): " + (ok ? "OK" : "CHYBA"));
+                    if (!ok) failures++;
+                }
+            } catch (Exception e) {
+                e.printStackTrace(); failures++;
+                System.out.println(ver + " trvalé spojenie: CHYBA " + e);
             }
         }
         // zlý kľúč sa musí odhaliť
