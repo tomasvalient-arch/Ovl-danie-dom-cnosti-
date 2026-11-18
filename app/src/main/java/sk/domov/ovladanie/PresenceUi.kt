@@ -377,7 +377,7 @@ fun PresenceScreen(vm: HomeViewModel, onBack: () -> Unit, onCloud: () -> Unit, o
                             val dp = AutoDevices.countdownDp(d, values(d))?.first
                             val net = wifiNetwork(context)
                             if (dp != null && net != null && PresenceStore.guardSet(context, d.id) > 0) {
-                                withContext(Dispatchers.IO) { runCatching { DeviceClient.setValues(net, d, mapOf(dp to 0)) } }
+                                withContext(Dispatchers.IO) { runCatching { DeviceClient.setValues(net, d, mapOf(dp to 0), "zrušenie poistky") } }
                                 PresenceStore.setGuardSet(context, d.id, 0L)
                             }
                         }

@@ -525,6 +525,8 @@ data class TechExtra(
     val cloud: CloudTech? = null,
     val cloudNote: String? = null,
     val log: List<String> = emptyList(),
+    /** Príkazy, ktoré appka poslala zariadeniu (denník v pamäti). */
+    val commands: List<String> = emptyList(),
 )
 
 /** Spracovanie textov zo zariadenia (bez Androidu). */
@@ -647,5 +649,8 @@ object TechInfo {
             appendLine("Sledovanie zmien (čas v telefóne):")
             extra.log.forEach { appendLine("  $it") }
         }
+        appendLine()
+        appendLine("Príkazy z appky, automatiky a widgetu (čas v telefóne, od spustenia appky):")
+        if (extra.commands.isEmpty()) appendLine("  (zatiaľ žiadne)") else extra.commands.forEach { appendLine("  $it") }
     }.trimEnd(), device)
 }

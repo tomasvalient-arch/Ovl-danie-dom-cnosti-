@@ -401,3 +401,6 @@ Princíp „svieti len to, čo je zapnuté“: tmavý neutrálny základ, teplá
 - Dolná lišta je plávajúca pilulka (`HomeBottomBar` v `Tabs.kt`).
 - Detail svetla: kruh s oblúkom jasu a tlačidlom Zapnúť / Vypnúť (`LightOrb`).
 - Widgety používajú rovnakú paletu (svetlý aj tmavý režim).
+
+## 20. Denník príkazov (od verzie 1.29.1)
+V **Technickom info** zariadenia pribudla sekcia „Príkazy z appky, automatiky a widgetu“: každý príkaz, ktorý sa zariadeniu poslal (s časom na milisekundy a zdrojom: appka, posuvník, widget, automatika, poistka, cloud), chyby pripojenia a zmeny zapnuté/vypnuté, ktoré appka videla. Slúži na zistenie, kto svetlu poslal príkaz, keď sa po zapnutí samo vypne. Denník je len v pamäti (`CommandLog.kt`).

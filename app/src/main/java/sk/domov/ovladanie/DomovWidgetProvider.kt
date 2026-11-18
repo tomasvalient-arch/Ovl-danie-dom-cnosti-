@@ -154,8 +154,8 @@ class DomovWidgetProvider : AppWidgetProvider() {
                 val target = before[power] != true
                 // fritéza, ktorá varí: najprv bezpečný Stop (štart/stop = false), hlavný vypínač sa vtedy nepoužije
                 val fryer = if (SafeOff.looksLikeFryer(device, before) && SafeOff.fryerRunning(before)) Fryer.detect(before) else null
-                if (fryer != null) DeviceClient.setValues(network, device, Fryer.start(fryer, false))
-                else DeviceClient.setValues(network, device, mapOf(power to target))
+                if (fryer != null) DeviceClient.setValues(network, device, Fryer.start(fryer, false), "widget")
+                else DeviceClient.setValues(network, device, mapOf(power to target), "widget")
                 Thread.sleep(350)
                 // Skontroluj, či zariadenie zmenu naozaj prijalo; ak sa nedá overiť, verím príkazu.
                 val after: Map<String, Any> = try {

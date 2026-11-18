@@ -255,6 +255,7 @@ class TuyaCloudClient(
      * s telom {"commands": [{"code": "switch_led", "value": false}]}. Pri chybe vyhodí CloudException.
      */
     fun sendCommands(devId: String, commands: List<Pair<String, Any>>) {
+        CommandLog.add(devId, "→ " + commands.joinToString(", ") { "${it.first}=${it.second}" } + "  [cloud]")
         request("POST", "/v1.0/iot-03/devices/$devId/commands", body = AutoDevices.commandBody(commands))
     }
 

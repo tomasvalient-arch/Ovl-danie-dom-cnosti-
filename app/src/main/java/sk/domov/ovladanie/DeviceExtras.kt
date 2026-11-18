@@ -102,7 +102,7 @@ internal fun TechInfoDialog(device: Device, values: Map<String, Any>?, onDismiss
     val text = runCatching {
         TechInfo.build(
             device, values, detectedText(device, values), appVersion(context),
-            TechExtra(localAll = localAll, localNote = localNote, cloud = cloud, cloudNote = cloudNote, log = log.toList()),
+            TechExtra(localAll = localAll, localNote = localNote, cloud = cloud, cloudNote = cloudNote, log = log.toList(), commands = CommandLog.lines(device.devId)),
         )
     }.getOrElse { "Technické info sa nepodarilo pripraviť: ${it.message}" }
     val monitoring = monitorJob?.isActive == true

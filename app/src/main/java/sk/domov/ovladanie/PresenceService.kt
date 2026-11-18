@@ -210,7 +210,7 @@ object PresenceActions {
                     val v = values(context, net, d)
                     val cmd = AutoDevices.arriveCommand(d, v) ?: break
                     try {
-                        DeviceClient.setValues(net, d, cmd)
+                        DeviceClient.setValues(net, d, cmd, "automatika")
                         StateCache.save(context, d.id, v + cmd, if (manual) StateCache.SRC_MANUAL_WIFI else StateCache.SRC_AUTO_WIFI)
                         error = null
                         break
@@ -420,9 +420,9 @@ object PresenceActions {
             val last = PresenceStore.guardSet(context, d.id)
             val refresh = if (force) 0L else cfg.guardRefreshMin * 60_000L
             when (Guard.decide(isOn, last > 0, last, now, refresh)) {
-                GuardStep.SET -> runCatching { DeviceClient.setValues(net, d, Guard.command(dp, minutes, cfg.guardSeconds)) }
+                GuardStep.SET -> runCatching { DeviceClient.setValues(net, d, Guard.command(dp, minutes, cfg.guardSeconds), "poistka") }
                     .onSuccess { PresenceStore.setGuardSet(context, d.id, now) }
-                GuardStep.CLEAR -> runCatching { DeviceClient.setValues(net, d, mapOf(dp to 0)) }
+                GuardStep.CLEAR -> runCatching { DeviceClient.setValues(net, d, mapOf(dp to 0), "poistka") }
                     .onSuccess { PresenceStore.setGuardSet(context, d.id, 0L) }
                 GuardStep.NONE -> {}
             }
@@ -443,7 +443,7 @@ object PresenceActions {
                 continue
             }
             val dp = cd.first
-            if (runCatching { DeviceClient.setValues(net, d, mapOf(dp to 0)) }.isSuccess) {
+            if (runCatching { DeviceClient.setValues(net, d, mapOf(dp to 0), "poistka") }.isSuccess) {
                 PresenceStore.setGuardSet(context, d.id, 0L)
                 n++
             }

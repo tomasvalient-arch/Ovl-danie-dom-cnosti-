@@ -49,7 +49,12 @@ object DeviceClient {
     }
 
     /** Načíta všetky hodnoty (DP) zariadenia, zoradené podľa čísla DP. */
-    fun readState(network: Network, d: Device): Map<String, Any> = exclusive(d) { closeLive(d); readStateOnce(network, d) }
+    fun readState(network: Network, d: Device): Map<String, Any> = try {
+        exclusive(d) { closeLive(d); readStateOnce(network, d) }
+    } catch (e: Exception) {
+        CommandLog.addThrottled(d.devId, "read-fail", "✗ čítanie stavu zlyhalo: ${describe(e)}", 5000)
+        throw e
+    }
 
     /** Koľkokrát po sebe zariadenie neposlalo vyžiadané skryté DP (po 3 razoch sa ďalej nepýtame). */
     private val hiddenMisses = ConcurrentHashMap<String, Int>()
@@ -124,11 +129,17 @@ object DeviceClient {
     }
 
     /** Nastaví jednu alebo viac hodnôt naraz (Boolean, číslo alebo text). */
-    fun setValues(network: Network, d: Device, values: Map<String, Any>) {
+    fun setValues(network: Network, d: Device, values: Map<String, Any>, src: String = "appka") {
         if (values.isEmpty()) return
         val json = JSONObject()
         for ((k, v) in values) json.put(k, v)
-        exclusive(d) { closeLive(d); client(network, d).setDps(json.toString()) }
+        CommandLog.add(d.devId, "→ $json  [$src]")
+        try {
+            exclusive(d) { closeLive(d); client(network, d).setDps(json.toString()) }
+        } catch (e: Exception) {
+            CommandLog.add(d.devId, "✗ príkaz zlyhal: ${describe(e)}")
+            throw e
+        }
     }
 
     /** Trvalé spojenia pre posuvníky (devId → spojenie, čas posledného použitia). Zatvoria sa po 3 s nečinnosti. */
@@ -184,6 +195,7 @@ object DeviceClient {
         if (d.ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
         val json = JSONObject()
         for ((k, v) in values) json.put(k, v)
+        CommandLog.addThrottled(d.devId, "live", "→ $json  [posuvník]", 1000)
         val lock = locks.getOrPut(d.devId) { Any() }
         synchronized(lock) {
             try {

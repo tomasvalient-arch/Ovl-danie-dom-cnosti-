@@ -282,7 +282,7 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
                 if (network == null) {
                     setState(d.id, DeviceState.Online((values[d.id] ?: emptyMap()) + cmd)); ok += d.name; continue
                 }
-                val sent = withContext(Dispatchers.IO) { runCatching { DeviceClient.setValues(network, d, cmd) } }
+                val sent = withContext(Dispatchers.IO) { runCatching { DeviceClient.setValues(network, d, cmd, "hromadná akcia") } }
                 if (sent.isSuccess) {
                     ok += d.name
                     apply(d, Result.success((values[d.id] ?: emptyMap()) + cmd))
@@ -305,7 +305,7 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
                             apply(d, Result.success(after))
                             continue
                         }
-                        val r = withContext(Dispatchers.IO) { runCatching { DeviceClient.setValues(network, d, rescue.cmd) } }
+                        val r = withContext(Dispatchers.IO) { runCatching { DeviceClient.setValues(network, d, rescue.cmd, "náprava po akcii") } }
                         warnings += if (r.isSuccess) rescue.warning else "${d.name}: zariadenie je zapnuté a nepodarilo sa ho zastaviť – vypni ho ručne!"
                         refresh(d, quiet = true)
                     }
@@ -625,6 +625,13 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
             runCatching { dragGuard.filter(device.id, previous, kept) }.getOrDefault(kept)
         }
         result.onSuccess {
+            // denník: zmena zapnuté/vypnuté, ktorú appka vidí (po príkaze alebo pri čítaní stavu)
+            runCatching {
+                val dp = powerDpOf(device, it)
+                val now = dp?.let { k -> it[k] as? Boolean }
+                val was = previous?.let { p -> dp?.let { k -> p[k] as? Boolean } }
+                if (now != null && now != was) CommandLog.add(device.devId, "stav v appke: " + if (now) "ZAPNUTÉ" else "VYPNUTÉ")
+            }
             _known.value = _known.value + (device.id to it)
             ownCacheWrite = true
             try { StateCache.save(app, device.id, it) } finally { ownCacheWrite = false }

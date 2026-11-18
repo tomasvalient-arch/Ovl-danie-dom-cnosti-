@@ -287,7 +287,7 @@ object FryerMonitor {
                     is OffStep.Idle -> { onValues(context, d, before); return@withContext "${d.name} nevarí – nič som neposlal." }
                     is OffStep.Skip -> return@withContext "${d.name}: preskočené (${step.reason})."
                     is OffStep.Send -> {
-                        DeviceClient.setValues(net, d, step.cmd)
+                        DeviceClient.setValues(net, d, step.cmd, "fritéza")
                         delay(1500)
                         val after = runCatching { DeviceClient.readState(net, d) }.getOrNull()
                         if (after != null) {
