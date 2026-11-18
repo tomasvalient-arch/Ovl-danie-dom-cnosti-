@@ -138,6 +138,7 @@ object BackupSpec {
         "domov_weather" to { k -> k == "settings" }, // od 1.12 (len nastavenie, nie stiahnuté údaje)
         "domov_moon" to { k -> k == "visible" }, // od 1.26 (zobrazenie pásu fázy mesiaca)
         "domov_shopping" to { k -> k == "items" }, // od 1.30 (nákupný zoznam)
+        "domov_events" to { k -> k == "events" || k == "time" }, // od 1.31 (udalosti a čas upozornení)
     )
     val files: Set<String> get() = FILES.keys
     fun included(file: String, key: String): Boolean = FILES[file]?.invoke(key) == true

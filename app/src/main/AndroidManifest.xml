@@ -93,6 +93,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".EventsReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".PresenceReceiver"
             android:exported="true">
             <intent-filter>

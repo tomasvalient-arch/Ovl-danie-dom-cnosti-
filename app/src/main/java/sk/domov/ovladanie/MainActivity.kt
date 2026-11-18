@@ -36,6 +36,8 @@ class MainActivity : ComponentActivity() {
         if (!PresenceService.isRunning) runCatching { PresenceService.sync(this) }
         vm.refreshAll()
         vm.weather.refresh()
+        // upozornenia na udalosti: pošle, čo zmeškal budík, a nastaví ďalší
+        EventReminders.check(this)
     }
 
     companion object {

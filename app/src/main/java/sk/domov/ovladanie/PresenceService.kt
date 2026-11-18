@@ -1101,6 +1101,7 @@ class PresenceReceiver : BroadcastReceiver() {
                 BackupManager.recover(context)
                 PresenceService.sync(context)
                 BackupManager.schedule(context)
+                EventReminders.check(context)
             }
             PresenceService.ACTION_TICK, PresenceService.ACTION_GUARD, PresenceService.ACTION_BEAT -> {
                 val svc = PresenceService.instance

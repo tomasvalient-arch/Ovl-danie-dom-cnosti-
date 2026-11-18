@@ -417,3 +417,13 @@ Na Domove je pod scénami tenký riadok **Nákup** (koľko zostáva kúpiť). Ť
 - Keď napíšeš položku, ktorá už v zozname je, nezduplikuje sa; ak je kúpená, vráti sa medzi nekúpené.
 - Zoznam sa ukladá len v tomto telefóne (`ShoppingAndroid.kt`, súbor `domov_shopping`) a je súčasťou zálohy. Zdieľanie s ďalším telefónom zatiaľ nie je.
 - Kód: `Shopping.kt` (logika bez Androidu), `ShoppingAndroid.kt` (uloženie), `ShoppingUi.kt` (riadok na Domove a obrazovka). Test: `tools/ShoppingTest.kt`.
+
+## 22. Udalosti a narodeniny (od verzie 1.31)
+Na Domove je pod Nákupom riadok **Udalosti** (najbližšia udalosť a za koľko dní). Ťuknutím sa otvorí zoznam, hore je + na pridanie.
+- Druh: **Udalosť** (jednorazová alebo „opakovať každý rok“) alebo **Narodeniny** (každý rok; ak zadáš rok narodenia, upozornenie napíše vek).
+- **Upozorniť vopred**: čipy V ten deň, 1 deň, 3 dni, 1 týždeň, 2 týždne, 30 dní (dá sa vybrať viac naraz) a políčko pre vlastný počet dní (0 – 365).
+- Čas upozornení je jeden pre všetky udalosti (predvolene 8:00, nastavíš dole v zozname). Na jednu udalosť je jedna notifikácia: „v ten deň“ nahradí „týždeň vopred“.
+- Budík (`AlarmManager.setAndAllowWhileIdle`, bez práva na presné budíky) sa spúšťa raz denne. Kontrola beží aj po štarte telefónu, po aktualizácii appky a pri každom otvorení appky, takže zmeškané upozornenie (vypnutý telefón, šetrič batérie) príde najneskôr vtedy. Ak je zmeškaných viac upozornení jednej udalosti, príde jedno – najbližšie k udalosti.
+- Po uložení udalosti sa upozornenia, ktorých čas už prešiel, považujú za vybavené (narodeniny o 3 dni s „týždeň vopred“ nespustia hneď staré upozornenie).
+- Bez povolených upozornení v telefóne sa nič nevybaví: hore je upozornenie s tlačidlom do nastavení a po zapnutí prídu zmeškané pri najbližšej kontrole. O povolenie sa appka pýta po uložení prvej udalosti (Android 13+).
+- Ukladá sa len v telefóne (`domov_events`), udalosti a čas upozornení sú v zálohe. Kód: `Events.kt` (logika bez Androidu), `EventsAndroid.kt` (uloženie, budík, notifikácie, `EventsReceiver`), `EventsUi.kt` (riadok, zoznam, dialóg). Test: `tools/EventsTest.kt`.

@@ -141,6 +141,8 @@ internal fun HomeMain(
     val selfName = remember(pagesOpen) { HouseholdStore.customName(context) ?: "ty" }
     // nákupný zoznam: znova sa načíta po návrate z obrazovky Nákup
     val shopItems = remember(pagesOpen, tick) { ShoppingStore.items(context) }
+    // udalosti a narodeniny: znova sa načítajú po návrate z obrazovky Udalosti
+    val eventItems = remember(pagesOpen, tick) { EventsStore.events(context) }
 
     fun values(d: Device): Map<String, Any> = deviceValues(d, states, known)
 
@@ -237,6 +239,9 @@ internal fun HomeMain(
             }
             item(span = { GridItemSpan(maxLineSpan) }, key = "shop") {
                 ShoppingRow(items = shopItems, onClick = { onPage("shopping") })
+            }
+            item(span = { GridItemSpan(maxLineSpan) }, key = "events") {
+                EventsRow(events = eventItems, onClick = { onPage("events") })
             }
 
             if (devices.isEmpty()) {
