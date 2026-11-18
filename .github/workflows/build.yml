@@ -19,8 +19,6 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
-
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Zostaviť APK
@@ -34,7 +32,9 @@ jobs:
           name: Domov
           path: Domov.apk
 
+      # Pracovné buildy (správa commitu obsahuje [bez-release]) sa len zostavia, release sa nevytvorí
       - name: Release
+        if: ${{ !contains(github.event.head_commit.message, '[bez-release]') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
