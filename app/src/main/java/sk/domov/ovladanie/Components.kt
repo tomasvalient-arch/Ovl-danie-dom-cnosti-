@@ -113,14 +113,32 @@ fun IconCircle(icon: ImageVector, on: Boolean, error: Boolean = false, size: Dp 
     }
 }
 
-/** Vypínač s fajkou v jazdci (ako v návrhu). */
+/**
+ * Vypínač s fajkou v jazdci (ako v návrhu). [onTile] = vypínač leží na jantárovej dlaždici (zapnuté zariadenie),
+ * kde by jantárová dráha splynula s podkladom, preto je dráha tmavá a jazdec jantárový.
+ */
 @Composable
-fun DomovSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun DomovSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true, onTile: Boolean = false) {
+    val c = Domov.colors
     Switch(
         checked = checked,
         onCheckedChange = onCheckedChange,
         enabled = enabled,
         modifier = modifier,
+        colors = if (onTile && checked) {
+            SwitchDefaults.colors(
+                checkedThumbColor = c.onIconOn,
+                checkedTrackColor = c.iconOn,
+                checkedBorderColor = c.iconOn,
+                checkedIconColor = c.iconOn,
+                disabledCheckedThumbColor = c.onIconOn.copy(alpha = 0.6f),
+                disabledCheckedTrackColor = c.iconOn.copy(alpha = 0.5f),
+                disabledCheckedBorderColor = c.iconOn.copy(alpha = 0.5f),
+                disabledCheckedIconColor = c.iconOn.copy(alpha = 0.6f),
+            )
+        } else {
+            SwitchDefaults.colors()
+        },
         thumbContent = if (checked) {
             { Icon(Sym.check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
         } else {

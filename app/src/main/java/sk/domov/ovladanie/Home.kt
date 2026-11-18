@@ -13,6 +13,9 @@ import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -158,24 +161,16 @@ internal fun HomeMain(
     var moving by remember { mutableStateOf<Device?>(null) }
 
     val groups = Groups.arrange(devices, ::values)
+    // „Pridať“ (tlačidlo + v hlavičke) = rovno hľadanie v sieti; Tuya cloud, import a ručné zadanie sú v Nastaveniach › Zariadenia
+    val addAction: () -> Unit = {
+        if (wifiOn) onScan() else scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar("Zariadenia sa v sieti hľadajú len na domácej WiFi. Mimo domu ich pridáš v Nastaveniach › Zariadenia (Tuya cloud alebo import).")
+        }
+    }
+    val firstName = remember(pagesOpen) { HouseholdStore.customName(context) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                // „Pridať“ = rovno hľadanie v sieti; Tuya cloud, import a ručné zadanie sú v Nastaveniach › Zariadenia
-                onClick = {
-                    if (wifiOn) onScan() else scope.launch {
-                        snackbar.currentSnackbarData?.dismiss()
-                        snackbar.showSnackbar("Zariadenia sa v sieti hľadajú len na domácej WiFi. Mimo domu ich pridáš v Nastaveniach › Zariadenia (Tuya cloud alebo import).")
-                    }
-                },
-                icon = { Icon(Sym.add, contentDescription = null) },
-                text = { Text("Pridať") },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                shape = RoundedCornerShape(18.dp),
-            )
-        },
     ) { padding ->
         var pulling by remember { mutableStateOf(false) }
         LaunchedEffect(pulling) { if (pulling) { delay(1200); pulling = false } }
@@ -188,18 +183,32 @@ internal fun HomeMain(
             // telefón (aj 360 dp) = 2 stĺpce, tablet / na šírku viac
             columns = GridCells.Adaptive(150.dp),
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 112.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Domov", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.weight(1f))
-                        IconButton(onClick = { if (wifiOn) vm.refreshAll(); vm.weather.refresh(force = true) }) { Icon(Sym.refresh, contentDescription = "Obnoviť") }
+                        Text(
+                            greetingText(firstName),
+                            style = MaterialTheme.typography.headlineMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Surface(
+                            onClick = addAction,
+                            modifier = Modifier.size(44.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) { Icon(Sym.add, contentDescription = "Pridať zariadenie") }
+                        }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (homeNames != null) InfoChip(Sym.homeFill, "Doma: $homeNames")
+                        if (homeNames != null) InfoChip(Sym.homeFill, "Doma: $homeNames", good = true)
                         if (sunrise != null || sunset != null) {
                             InfoChip(Sym.wbTwilight, listOfNotNull(sunrise?.let { "Východ $it" }, sunset?.let { "Západ $it" }).joinToString(" · "))
                         }
@@ -218,10 +227,10 @@ internal fun HomeMain(
             notice?.let { msg -> item(span = { GridItemSpan(maxLineSpan) }, key = "notice") { NoticeBanner(message = msg, onDismiss = { vm.dismissNotice() }) } }
 
             item(span = { GridItemSpan(maxLineSpan) }, key = "actions") {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
-                    QuickAction(Sym.powerSettingsNew, "Všetko vypnúť", highlighted = false, modifier = Modifier.weight(1f).fillMaxHeight()) { confirmAllOff = true }
-                    QuickAction(Sym.doorOpen, "Príchod", highlighted = true, modifier = Modifier.weight(1f).fillMaxHeight()) { vm.arriveNow() }
-                    QuickAction(Sym.bedtime, "Noc", highlighted = false, modifier = Modifier.weight(1f).fillMaxHeight()) { confirmNight = true }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    ScenePill(Sym.doorOpen, "Príchod", highlighted = true) { vm.arriveNow() }
+                    ScenePill(Sym.bedtime, "Noc", highlighted = false) { confirmNight = true }
+                    ScenePill(Sym.powerSettingsNew, "Všetko vypnúť", highlighted = false) { confirmAllOff = true }
                 }
             }
 
@@ -254,6 +263,11 @@ internal fun HomeMain(
                         onOpen = { onOpen(device.id) },
                         onLongPress = { moving = device },
                         onTogglePower = { dp, on -> onTogglePower(device, dp, on) },
+                        onChannel = { ch, on ->
+                            // svetlo s podhľadom: každý zdroj sa zapína samostatne
+                            val v = values(device)
+                            LightChannels.detect(device, v)?.let { ml -> vm.setValues(device, LightChannels.setOn(ml, ch, on, v)) }
+                        },
                         onBlockedTap = {
                             scope.launch {
                                 snackbar.currentSnackbarData?.dismiss()
@@ -324,17 +338,42 @@ internal fun HomeMain(
     }
 }
 
+/** Pozdrav podľa času a (ak je zadané) mena: „Dobrý večer, Tomáš“. */
+private fun greetingText(name: String?): String {
+    val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    val greeting = when {
+        hour in 5..9 -> "Dobré ráno"
+        hour in 10..17 -> "Dobrý deň"
+        else -> "Dobrý večer"
+    }
+    return if (name.isNullOrBlank()) greeting else "$greeting, $name"
+}
+
 @Composable
-private fun InfoChip(icon: ImageVector, text: String, error: Boolean = false) {
+private fun InfoChip(icon: ImageVector, text: String, error: Boolean = false, good: Boolean = false) {
+    val c = Domov.colors
+    val scheme = MaterialTheme.colorScheme
+    val bg = when {
+        error -> scheme.errorContainer
+        good -> c.goodContainer
+        else -> scheme.surfaceContainerLow
+    }
+    val accent = when {
+        error -> scheme.error
+        good -> c.good
+        else -> scheme.primary
+    }
     Row(
         modifier = Modifier
-            .background(if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(10.dp))
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .heightIn(min = 32.dp)
+            .background(bg, RoundedCornerShape(16.dp))
+            .then(if (error || good) Modifier else Modifier.border(1.dp, scheme.surfaceVariant, RoundedCornerShape(16.dp)))
+            .padding(horizontal = 12.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+        Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(6.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+        Text(text, style = MaterialTheme.typography.labelLarge, color = if (good) c.good else scheme.onSurface)
     }
 }
 
@@ -413,37 +452,27 @@ internal fun presenceStateText(s: PresenceStatus, cfg: PresenceConfig, now: Long
     PresenceState.UNKNOWN -> "Zisťujem, či si doma…"
 }
 
+/** Scéna ako malá pilulka (Príchod, Noc, Všetko vypnúť). Zvýraznená = jantárová. */
 @Composable
-private fun QuickAction(icon: ImageVector, label: String, highlighted: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val c = Domov.colors
+private fun ScenePill(icon: ImageVector, label: String, highlighted: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     Surface(
         onClick = onClick,
-        modifier = modifier.heightIn(min = 88.dp),
-        shape = MaterialTheme.shapes.large,
-        color = if (highlighted) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(1.dp, if (highlighted) c.tileOnBorder else MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.height(44.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = if (highlighted) scheme.primaryContainer else scheme.surfaceContainerLow,
+        contentColor = if (highlighted) scheme.onPrimaryContainer else scheme.onSurface,
+        border = BorderStroke(1.dp, if (highlighted) scheme.primaryContainer else scheme.surfaceVariant),
     ) {
-        Column(
-            modifier = Modifier.then(if (highlighted) Modifier.background(c.tileOn) else Modifier).padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            IconCircle(icon, on = highlighted, size = 32.dp)
-            // na úzkych telefónoch / s veľkým písmom sa „Všetko vypnúť“ zalomí na 2 riadky (predtým sa orezalo)
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp, letterSpacing = 0.sp),
-                color = if (highlighted) c.onTileOn else MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
+        Row(modifier = Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(7.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
         }
     }
 }
 
-/** Dlaždica zariadenia: zapnuté = jantárová, vypnuté = tlmená, offline = červená ikona. Dlhé podržanie = presun. */
+/** Dlaždica zariadenia: zapnuté = jantárová, vypnuté = tmavá, offline = červená ikona. Dlhé podržanie = presun. */
 @Composable
 private fun Tile(
     device: Device,
@@ -454,6 +483,7 @@ private fun Tile(
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
     onTogglePower: (String, Boolean) -> Unit,
+    onChannel: (LightChannel, Boolean) -> Unit,
     onBlockedTap: () -> Unit,
 ) {
     val c = Domov.colors
@@ -465,29 +495,38 @@ private fun Tile(
     // svetlo s podhľadom: dlaždica svieti, keď svieti hociktorý zdroj
     val on = if (multi != null) LightChannels.anyOn(multi, values) else power != null && values?.get(power) == true
     val offline = state is DeviceState.Error && !stale
+    // jas svetla ako pásik v dlaždici (len keď svieti a nie je to svetlo s podhľadom)
+    val lightSpec = if (values != null && multi == null) Light.detect(values) else null
+    val lightPercent: Int? = if (lightSpec != null && values != null && on) {
+        val st = Light.read(lightSpec, values)
+        (if (st.isColour) (st.color.v * 100).roundToInt() else st.whitePercent).coerceIn(0, 100)
+    } else null
+    val minH = if (multi != null || lightSpec != null) 186.dp else 132.dp
     val shape = MaterialTheme.shapes.large
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 132.dp)
+            .heightIn(min = minH)
             .then(if (on) Modifier.background(c.tileOn, shape) else Modifier.background(c.tileOff, shape))
             .border(1.dp, if (on) c.tileOnBorder else c.tileOffBorder, shape)
             .clip(shape)
             .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
             .padding(14.dp),
     ) {
-        Column(modifier = Modifier.fillMaxWidth().heightIn(min = 104.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Column(modifier = Modifier.fillMaxWidth().heightIn(min = minH - 28.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Row(verticalAlignment = Alignment.Top) {
                 IconCircle(kindIcon(device, values ?: known, on), on = on, error = offline, size = 40.dp)
                 Spacer(Modifier.weight(1f))
                 when {
                     offline -> Icon(Sym.cloudOff, contentDescription = "Offline", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                    // dva zdroje: namiesto vypínača sú dole tlačidlá jednotlivých zdrojov
+                    multi != null -> Unit
                     power != null && stale -> Box {
                         // tlmený prepínač s posledným známym stavom; ťuknutie vysvetlí, prečo sa nedá prepnúť
-                        DomovSwitch(checked = on, onCheckedChange = null, enabled = false)
+                        DomovSwitch(checked = on, onCheckedChange = null, enabled = false, onTile = on)
                         Box(Modifier.matchParentSize().clickable(onClickLabel = "Prečo sa nedá prepnúť") { onBlockedTap() })
                     }
-                    power != null -> DomovSwitch(checked = on, onCheckedChange = { onTogglePower(power, it) }, enabled = wifiOn)
+                    power != null -> DomovSwitch(checked = on, onCheckedChange = { onTogglePower(power, it) }, enabled = wifiOn, onTile = on)
                 }
             }
             Column {
@@ -513,8 +552,55 @@ private fun Tile(
                     maxLines = if (stale) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (lightPercent != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(c.onTileOn.copy(alpha = 0.18f))) {
+                        Box(Modifier.fillMaxWidth(lightPercent / 100f).fillMaxHeight().background(c.onTileOn))
+                    }
+                }
+            }
+            if (multi != null && values != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    multi.channels.forEach { ch ->
+                        val chOn = LightChannels.read(multi, ch, values).on
+                        ChannelButton(ch = ch, chOn = chOn, tileOn = on, enabled = wifiOn && !stale && !offline, onClick = { onChannel(ch, !chOn) })
+                    }
+                }
             }
         }
+    }
+}
+
+/** Tlačidlo jedného zdroja svetla na dlaždici (Hlavné / Podhľad). */
+@Composable
+private fun ChannelButton(ch: LightChannel, chOn: Boolean, tileOn: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val c = Domov.colors
+    val scheme = MaterialTheme.colorScheme
+    val label = when {
+        ch.main -> "Hlavné"
+        ch.name.contains("odhľad", ignoreCase = true) -> "Podhľad"
+        else -> ch.name
+    }
+    val fg = if (tileOn) c.onTileOn else scheme.onSurfaceVariant
+    val ring = if (tileOn) c.onTileOn.copy(alpha = 0.5f) else scheme.outline
+    Column(
+        modifier = Modifier
+            .width(64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = enabled, onClickLabel = label, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .then(if (chOn) Modifier.background(c.iconOn) else Modifier.border(1.5.dp, ring, CircleShape)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(if (ch.main) Sym.lightbulb else Sym.palette, contentDescription = null, tint = if (chOn) c.onIconOn else fg, modifier = Modifier.size(22.dp))
+        }
+        Text(label, style = MaterialTheme.typography.labelSmall, color = fg, maxLines = 1)
     }
 }
 

@@ -1,5 +1,16 @@
 package sk.domov.ovladanie
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,29 +62,44 @@ enum class HomeTab(val label: String, val icon: ImageVector, val selectedIcon: I
     SETTINGS("Nastavenia", Sym.settings, Sym.settings),
 }
 
+/** Plávajúca dolná lišta: zaoblená pilulka, vybraná karta je jantárová. */
 @Composable
 internal fun HomeBottomBar(selected: HomeTab, onSelect: (HomeTab) -> Unit, automationAlert: Boolean = false) {
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
-        HomeTab.entries.forEach { t ->
-            NavigationBarItem(
-                selected = t == selected,
-                onClick = { onSelect(t) },
-                icon = {
-                    if (t == HomeTab.AUTOMATION && automationAlert) {
-                        androidx.compose.material3.BadgedBox(badge = { androidx.compose.material3.Badge() }) {
-                            Icon(if (t == selected) t.selectedIcon else t.icon, contentDescription = "Automatika nebeží")
+    val scheme = MaterialTheme.colorScheme
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(34.dp),
+            color = scheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, scheme.surfaceVariant),
+            shadowElevation = 6.dp,
+        ) {
+            Row(modifier = Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                HomeTab.entries.forEach { t ->
+                    val sel = t == selected
+                    val tint = if (sel) scheme.onPrimaryContainer else scheme.onSurfaceVariant
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(if (sel) scheme.primaryContainer else Color.Transparent)
+                            .clickable { onSelect(t) },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        // červená bodka na karte Automatika, keď je zapnutá, ale služba nebeží
+                        if (t == HomeTab.AUTOMATION && automationAlert) {
+                            androidx.compose.material3.BadgedBox(badge = { androidx.compose.material3.Badge() }) {
+                                Icon(if (sel) t.selectedIcon else t.icon, contentDescription = "Automatika nebeží", tint = tint, modifier = Modifier.size(22.dp))
+                            }
+                        } else {
+                            Icon(if (sel) t.selectedIcon else t.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
                         }
-                    } else {
-                        Icon(if (t == selected) t.selectedIcon else t.icon, contentDescription = null)
+                        Text(t.label, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = tint, maxLines = 1)
                     }
-                },
-                label = { Text(t.label, maxLines = 1) },
-                colors = NavigationBarItemDefaults.colors(
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                ),
-            )
+                }
+            }
         }
     }
 }
@@ -86,7 +112,7 @@ private fun TabPage(title: String, content: @Composable () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(Modifier.fillMaxWidth().height(56.dp).padding(top = 8.dp), contentAlignment = Alignment.CenterStart) {
-            Text(title, style = MaterialTheme.typography.headlineLarge)
+            Text(title, style = MaterialTheme.typography.headlineMedium)
         }
         content()
         Spacer(Modifier.height(16.dp))
