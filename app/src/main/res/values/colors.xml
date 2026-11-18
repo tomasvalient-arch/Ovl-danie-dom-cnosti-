@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="domov_bg">#FFF8F4</color>
+    <color name="domov_bg">#FBF5EE</color>
     <color name="domov_accent">#855400</color>
-    <color name="widget_text">#211A14</color>
-    <color name="widget_text_muted">#51453A</color>
+    <color name="widget_text">#241B13</color>
+    <color name="widget_text_muted">#66554A</color>
     <color name="widget_text_on">#2A1700</color>
-    <color name="widget_text_on_muted">#6B4513</color>
-    <color name="widget_icon_on">#855400</color>
-    <color name="widget_icon_off">#51453A</color>
+    <color name="widget_text_on_muted">#5B3A0E</color>
+    <color name="widget_icon_on">#2A1700</color>
+    <color name="widget_icon_off">#66554A</color>
     <color name="widget_error">#BA1A1A</color>
 </resources>

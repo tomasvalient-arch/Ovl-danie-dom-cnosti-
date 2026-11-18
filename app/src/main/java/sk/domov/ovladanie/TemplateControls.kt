@@ -170,14 +170,16 @@ private fun PowerHero(deviceId: String, watts: Double?, unit: String, on: Boolea
         ) {
             val fg = if (on) c.onTileOn else MaterialTheme.colorScheme.onSurface
             val muted = if (on) c.onTileOnMuted else MaterialTheme.colorScheme.onSurfaceVariant
+            // na jantárovej karte (zapnuté) by jantárový akcent splynul s podkladom, preto je tam tmavý
+            val accent = if (on) c.onTileOn else MaterialTheme.colorScheme.primary
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(
                     modifier = Modifier
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+                        .background(accent.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
                         .padding(horizontal = 10.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Sym.boltFill, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                    Icon(Sym.boltFill, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Príkon teraz", style = MaterialTheme.typography.labelMedium, color = fg)
                 }
@@ -195,10 +197,10 @@ private fun PowerHero(deviceId: String, watts: Double?, unit: String, on: Boolea
                     letterSpacing = (-2).sp,
                     color = fg,
                 )
-                Text(" $unit", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 10.dp))
+                Text(" $unit", style = MaterialTheme.typography.headlineSmall, color = accent, modifier = Modifier.padding(bottom = 10.dp))
             }
             if (samples.size >= 2) {
-                LineGraph(samples.map { it.watts }, modifier = Modifier.fillMaxWidth().height(96.dp))
+                LineGraph(samples.map { it.watts }, modifier = Modifier.fillMaxWidth().height(96.dp), line = accent)
                 val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
                 val maxW = samples.maxOf { it.watts }
                 val minW = samples.minOf { it.watts }

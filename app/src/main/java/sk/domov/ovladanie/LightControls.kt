@@ -71,7 +71,8 @@ internal fun tempText(t: Float): String {
 }
 
 /**
- * Veľký svietiaci kruh s jasom. Ťuknutie = zapnúť / vypnúť. [glow] = farba žiary (farebný režim), inak jantárová.
+ * Veľký svietiaci kruh s oblúkom jasu (270°) a výrazným tlačidlom Zapnúť / Vypnúť. Ťuknutie na kruh funguje tiež.
+ * [glow] = farba žiary (farebný režim), inak jantárová.
  */
 @Composable
 fun LightOrb(on: Boolean, percent: Int, glow: Color?, enabled: Boolean, onToggle: () -> Unit) {
@@ -82,17 +83,27 @@ fun LightOrb(on: Boolean, percent: Int, glow: Color?, enabled: Boolean, onToggle
         else -> c.orbGradient
     }
     val halo = glow ?: c.glow
-    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(modifier = Modifier.size(250.dp), contentAlignment = Alignment.Center) {
-            if (on) {
-                Canvas(Modifier.fillMaxSize()) {
-                    drawCircle(Brush.radialGradient(listOf(halo.copy(alpha = 0.45f), halo.copy(alpha = 0.12f), Color.Transparent)))
-                    drawCircle(halo.copy(alpha = 0.10f), radius = size.minDimension * 0.44f)
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Box(modifier = Modifier.size(264.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                if (on) {
+                    drawCircle(Brush.radialGradient(listOf(halo.copy(alpha = 0.40f), halo.copy(alpha = 0.10f), Color.Transparent)))
+                }
+                // oblúk jasu: začína vľavo dole, 270° dookola, medzera dole
+                val stroke = 10.dp.toPx()
+                val inset = stroke / 2f + 4.dp.toPx()
+                val topLeft = Offset(inset, inset)
+                val arcSize = androidx.compose.ui.geometry.Size(size.width - 2f * inset, size.height - 2f * inset)
+                val line = Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                drawArc(color = track, startAngle = 135f, sweepAngle = 270f, useCenter = false, topLeft = topLeft, size = arcSize, style = line)
+                if (on) {
+                    drawArc(color = halo, startAngle = 135f, sweepAngle = 270f * percent.coerceIn(1, 100) / 100f, useCenter = false, topLeft = topLeft, size = arcSize, style = line)
                 }
             }
             Box(
                 modifier = Modifier
-                    .size(184.dp)
+                    .size(188.dp)
                     .clip(CircleShape)
                     .background(Brush.radialGradient(colors))
                     .then(if (!on) Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape) else Modifier)
@@ -107,11 +118,20 @@ fun LightOrb(on: Boolean, percent: Int, glow: Color?, enabled: Boolean, onToggle
                 }
             }
         }
-        Text(
-            if (on) "Ťukni na kruh pre vypnutie" else "Ťukni na kruh pre zapnutie",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        androidx.compose.material3.Surface(
+            onClick = onToggle,
+            enabled = enabled,
+            shape = CircleShape,
+            color = if (on) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.primaryContainer,
+            contentColor = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onPrimaryContainer,
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (on) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer),
+        ) {
+            Row(modifier = Modifier.padding(horizontal = 24.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Sym.powerSettingsNew, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (on) "Vypnúť" else "Zapnúť", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            }
+        }
     }
 }
 
