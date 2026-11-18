@@ -392,3 +392,12 @@ Medzi počasím a fázou mesiaca je úzky pás s dnešným dňom, dátumom a men
   java -cp out MockTest
   ```
 - Build lokálne: `./gradlew :app:assembleDebug` (potrebuje Android SDK).
+
+## 19. Nový vzhľad (od verzie 1.29)
+Princíp „svieti len to, čo je zapnuté“: tmavý neutrálny základ, teplá jantárová len pre zapnuté zariadenia a aktívne prvky.
+- Farby sú v `Theme.kt` (`DarkScheme`/`LightScheme`, `DomovColors`) – zmena tokenov prefarbí celú aplikáciu.
+- Domov: pozdrav podľa času, tlačidlo „+“ v hlavičke (namiesto plávajúceho „Pridať“), scény ako pilulky, podrobné počasie, meniny a fáza mesiaca ostali.
+- Dlaždice: jantárové keď svietia, pásik jasu pri svetlách, pri svetle s podhľadom dve tlačidlá (Hlavné / Podhľad).
+- Dolná lišta je plávajúca pilulka (`HomeBottomBar` v `Tabs.kt`).
+- Detail svetla: kruh s oblúkom jasu a tlačidlom Zapnúť / Vypnúť (`LightOrb`).
+- Widgety používajú rovnakú paletu (svetlý aj tmavý režim).
