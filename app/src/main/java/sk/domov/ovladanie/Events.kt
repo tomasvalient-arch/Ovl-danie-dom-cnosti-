@@ -22,6 +22,11 @@ data class EventItem(
     val yearly: Boolean,
     /** Za koľko dní vopred upozorniť (0 = v ten deň). */
     val offsets: List<Int>,
+    /** Meniny osoby (len pri narodeninách): mesiac a deň, 0 = bez menín. Upozornenia platia pre narodeniny aj meniny. */
+    val meninyMonth: Int = 0,
+    val meninyDay: Int = 0,
+    /** Len odvodená položka (nikdy sa neukladá): meniny osoby ako samostatný dátum, pozri [Events.parts]. */
+    val isMeniny: Boolean = false,
 )
 
 /** Upozornenie, ktoré je na rade: [offset] je najbližšie k udalosti, [keys] sú všetky upozornenia, ktoré sa tým vybavili. */
@@ -37,6 +42,9 @@ object Events {
     const val MAX_NAME = 60
     const val MAX_OFFSET = 365
 
+    /** Prípona id odvodenej položky s meninami; ostáva v kľúčoch odoslaných upozornení a v id notifikácie. */
+    const val MENINY_SUFFIX = "~n"
+
     /** Rýchle voľby „upozorniť vopred“ (dni). */
     val PRESETS = listOf(0, 1, 3, 7, 14, 30)
 
@@ -44,6 +52,7 @@ object Events {
         "januára", "februára", "marca", "apríla", "mája", "júna",
         "júla", "augusta", "septembra", "októbra", "novembra", "decembra",
     )
+    private val MONTHS_SHORT = listOf("jan", "feb", "mar", "apr", "máj", "jún", "júl", "aug", "sep", "okt", "nov", "dec")
     private val WEEKDAYS = listOf("pondelok", "utorok", "streda", "štvrtok", "piatok", "sobota", "nedeľa")
 
     fun clean(text: String): String {
@@ -74,6 +83,51 @@ object Events {
     fun age(e: EventItem, occ: LocalDate): Int? =
         if (e.birthday && e.year > 0 && occ.year > e.year) occ.year - e.year else null
 
+    fun hasMeniny(e: EventItem): Boolean = e.birthday && !e.isMeniny && e.meninyMonth in 1..12 && e.meninyDay in 1..31
+
+    /**
+     * Dátumy, ktoré sa pripomínajú: samotná udalosť alebo narodeniny a pri osobe s meninami aj jej meniny
+     * (odvodená položka s id + [MENINY_SUFFIX], každoročná, bez veku). Upozornenia vopred sú pre oba rovnaké.
+     */
+    fun parts(e: EventItem): List<EventItem> {
+        if (!hasMeniny(e)) return listOf(e)
+        val m = e.copy(
+            id = e.id + MENINY_SUFFIX, birthday = false, isMeniny = true, year = 0,
+            month = e.meninyMonth, day = e.meninyDay, yearly = true, meninyMonth = 0, meninyDay = 0,
+        )
+        return listOf(e, m)
+    }
+
+    fun expand(events: List<EventItem>): List<EventItem> = events.flatMap { parts(it) }
+
+    /** Id uloženého záznamu, z ktorého je odvodená položka (pre meniny id bez prípony). */
+    fun baseId(id: String): String = id.removeSuffix(MENINY_SUFFIX)
+
+    /** Okno upozornení: koľko dní vopred sa položka začne ukazovať (najväčšia voľba vopred); null = bez upozornenia, nikdy sa neukáže na Domove. */
+    fun window(e: EventItem): Int? = e.offsets.maxOrNull()
+
+    /** Odvodené položky rozdelené podľa blízkosti: [soon] sú v okne upozornení (ukazujú sa na Domove), [later] sú budúce mimo okna, [past] jednorazové, ktoré už prešli. */
+    data class EventGroups(val soon: List<EventItem>, val later: List<EventItem>, val past: List<EventItem>)
+
+    fun groups(events: List<EventItem>, today: LocalDate): EventGroups {
+        val soon = ArrayList<EventItem>()
+        val later = ArrayList<EventItem>()
+        val past = ArrayList<EventItem>()
+        for (p in expand(events)) {
+            val days = daysUntil(p, today)
+            val w = window(p)
+            if (days == null) past += p
+            else if (w != null && days <= w) soon += p
+            else later += p
+        }
+        val byDate = compareBy<EventItem>({ daysUntil(it, today) ?: Int.MAX_VALUE }, { it.name.lowercase() }, { if (it.isMeniny) 1 else 0 })
+        return EventGroups(
+            soon.sortedWith(byDate),
+            later.sortedWith(byDate),
+            past.sortedByDescending { safeDate(maxOf(it.year, 1), it.month, it.day) },
+        )
+    }
+
     /** Poradie v zozname: najbližšie hore, potom už prešlé (najnovšie prvé). */
     fun arrange(events: List<EventItem>, today: LocalDate): List<EventItem> {
         val upcoming = events.filter { occurrence(it, today) != null }
@@ -99,7 +153,7 @@ object Events {
     fun due(events: List<EventItem>, fired: Set<String>, now: LocalDateTime, time: LocalTime): List<EventDue> {
         val today = now.toLocalDate()
         val out = ArrayList<EventDue>()
-        for (e in events) {
+        for (e in expand(events)) {
             val occ = occurrence(e, today) ?: continue
             val keys = ArrayList<String>()
             var best: Int? = null
@@ -121,13 +175,19 @@ object Events {
      * ktoré sú o 3 dni, hneď prišlo „týždeň vopred“). Staré záznamy tej istej udalosti sa zahodia.
      */
     fun afterSave(fired: Set<String>, e: EventItem, now: LocalDateTime, time: LocalTime): Set<String> {
-        val kept = fired.filterNot { it.startsWith(e.id + "|") }.toMutableSet()
-        val occ = occurrence(e, now.toLocalDate()) ?: return kept
-        for (off in e.offsets.distinct()) {
-            if (isDue(occ.minusDays(off.toLong()), now, time)) kept += key(e, off, occ)
+        val kept = dropKeys(fired, e.id).toMutableSet()
+        for (p in parts(e)) {
+            val occ = occurrence(p, now.toLocalDate()) ?: continue
+            for (off in p.offsets.distinct()) {
+                if (isDue(occ.minusDays(off.toLong()), now, time)) kept += key(p, off, occ)
+            }
         }
         return kept
     }
+
+    /** Záznamy o odoslaných upozorneniach bez tých, ktoré patria udalosti [id] (aj jej meninám). */
+    fun dropKeys(fired: Set<String>, id: String): Set<String> =
+        fired.filterNot { it.startsWith("$id|") || it.startsWith(id + MENINY_SUFFIX + "|") }.toSet()
 
     /** Zahodí záznamy o upozorneniach, ktorých udalosť už prešla. */
     fun prune(fired: Set<String>, today: LocalDate): Set<String> = fired.filter { k ->
@@ -176,7 +236,31 @@ object Events {
         return if (weekday) "${WEEKDAYS[d.dayOfWeek.value - 1]} $withYear" else withYear
     }
 
-    fun title(e: EventItem): String = if (e.birthday) "Narodeniny: ${e.name}" else e.name
+    fun title(e: EventItem): String = when {
+        e.isMeniny -> "Meniny: ${e.name}"
+        e.birthday -> "Narodeniny: ${e.name}"
+        else -> e.name
+    }
+
+    /** „Narodeniny“, „Meniny“ alebo prázdny text pre obyčajnú udalosť. */
+    fun partLabel(e: EventItem): String = when {
+        e.isMeniny -> "Meniny"
+        e.birthday -> "Narodeniny"
+        else -> ""
+    }
+
+    /** Text na pilulke s odpočtom: „Dnes“, „Zajtra“, „4 dni“. */
+    fun pillText(days: Int): String = countdown(days).let { if (it.second.isEmpty()) it.first else it.first + " " + it.second }
+
+    /** Vek pri najbližších narodeninách („35 rokov“) alebo null. */
+    fun ageCaption(e: EventItem, today: LocalDate): String? {
+        val occ = occurrence(e, today) ?: return null
+        val a = age(e, occ) ?: return null
+        return yearsText(a)
+    }
+
+    /** Skratka mesiaca pre blok s dátumom v zozname: „mar“, „júl“. */
+    fun monthShort(d: LocalDate): String = MONTHS_SHORT[d.monthValue - 1]
 
     /** Text voľby „vopred“ na čipe: „V ten deň“, „1 deň“, „3 dni“, „1 týždeň“, „30 dní“. */
     fun offsetLabel(off: Int): String = when (off) {
@@ -218,18 +302,19 @@ object Events {
         return parts.joinToString(" · ")
     }
 
-    /** Pravá strana riadku na Domove: „o 12 dní · Narodeniny: Priateľka“. */
-    fun rowText(events: List<EventItem>, today: LocalDate): String {
-        if (events.isEmpty()) return "Pridať"
-        val next = arrange(events, today).firstOrNull { occurrence(it, today) != null } ?: return "Nič nadchádza"
-        return inText(daysUntil(next, today) ?: 0) + " · " + title(next)
-    }
+    /** Text tenkého riadka na Domove, keď sa nič nechystá. */
+    fun slimText(events: List<EventItem>): String = if (events.isEmpty()) "Pridať" else "Nič sa nechystá"
 
-    /** Podnadpis obrazovky. */
+    /** Podnadpis obrazovky: „3 čoskoro · 2 neskôr“. */
     fun subtitle(events: List<EventItem>, today: LocalDate): String {
         if (events.isEmpty()) return "Zatiaľ žiadne udalosti"
-        val next = arrange(events, today).firstOrNull { occurrence(it, today) != null } ?: return "Nič nadchádza"
-        return "Najbližšia: " + inText(daysUntil(next, today) ?: 0)
+        val g = groups(events, today)
+        val parts = ArrayList<String>()
+        val first = if (g.soon.isEmpty()) "Nič sa nechystá" else "${g.soon.size} čoskoro"
+        parts += first
+        if (g.later.isNotEmpty()) parts += "${g.later.size} neskôr"
+        if (g.past.isNotEmpty()) parts += "${g.past.size} prešlo"
+        return parts.joinToString(" · ")
     }
 
     // ------------------------------------------------------------------ plán upozornení (náhľad v dialógu)
@@ -264,15 +349,30 @@ object Events {
         return lines
     }
 
+    /**
+     * Riadky plánu pre všetky dátumy udalosti. Pri osobe s meninami začína každý riadok názvom dátumu
+     * („Narodeniny – príde o 8:00: …“, „Meniny – už prešlo, nepríde: …“).
+     */
+    fun planLinesFor(e: EventItem, now: LocalDateTime, time: LocalTime): List<String> {
+        if (e.offsets.isEmpty()) return listOf("Bez upozornenia – nepríde nič.")
+        val ps = parts(e)
+        if (ps.size == 1) return planLines(plan(ps[0], now, time), time)
+        val out = ArrayList<String>()
+        for (p in ps) for (line in planLines(plan(p, now, time), time)) {
+            out += partLabel(p) + " – " + line.replaceFirstChar { it.lowercase() }
+        }
+        return out
+    }
+
     // ------------------------------------------------------------------ uloženie
 
     fun toJson(events: List<EventItem>): String {
         val a = JSONArray()
         events.forEach {
-            a.put(
-                JSONObject().put("i", it.id).put("n", it.name).put("b", it.birthday).put("y", it.year)
-                    .put("m", it.month).put("d", it.day).put("r", it.yearly).put("o", JSONArray(it.offsets)),
-            )
+            val o = JSONObject().put("i", it.id).put("n", it.name).put("b", it.birthday).put("y", it.year)
+                .put("m", it.month).put("d", it.day).put("r", it.yearly).put("o", JSONArray(it.offsets))
+            if (hasMeniny(it)) o.put("mm", it.meninyMonth).put("md", it.meninyDay)
+            a.put(o)
         }
         return a.toString()
     }
@@ -289,6 +389,10 @@ object Events {
                 val month = o.optInt("m", 0)
                 val day = o.optInt("d", 0)
                 if (name.isEmpty() || month !in 1..12 || day !in 1..31) continue
+                val birthday = o.optBoolean("b")
+                val mm = o.optInt("mm", 0)
+                val md = o.optInt("md", 0)
+                val withMeniny = birthday && mm in 1..12 && md in 1..31
                 val offs = ArrayList<Int>()
                 val oa = o.optJSONArray("o")
                 if (oa != null) for (j in 0 until oa.length()) {
@@ -298,12 +402,14 @@ object Events {
                 out += EventItem(
                     id = o.optString("i").ifBlank { UUID.randomUUID().toString() },
                     name = name,
-                    birthday = o.optBoolean("b"),
+                    birthday = birthday,
                     year = o.optInt("y", 0).coerceAtLeast(0),
                     month = month,
                     day = day,
                     yearly = o.optBoolean("r"),
                     offsets = offs.distinct().sortedDescending(),
+                    meninyMonth = if (withMeniny) mm else 0,
+                    meninyDay = if (withMeniny) md else 0,
                 )
             }
             out
@@ -322,5 +428,39 @@ object Events {
         } catch (e: Exception) {
             emptySet()
         }
+    }
+}
+
+/**
+ * Výber dátumu na bubnoch (deň, mesiac, rok) bez Androidu. Bubon sa po zastavení opraví na platný dátum:
+ * deň sa skráti na dĺžku mesiaca (31. → 28. 2.) a dátum sa dá do rozsahu [min, max] (jednorazová udalosť nie je v minulosti,
+ * narodený nie je v budúcnosti). Hodnoty, ktoré sa nedajú vybrať, sa na bubne zašednú.
+ */
+object DatePick {
+    /** Referenčný rok pre dátumy bez roku (meniny, každoročné udalosti): priestupný, aby sa dalo vybrať aj 29. 2. */
+    const val LEAP_YEAR = 2024
+
+    fun lengthOf(year: Int, month: Int): Int = YearMonth.of(year, month.coerceIn(1, 12)).lengthOfMonth()
+
+    /** Dátum sa dá vybrať: deň v mesiaci existuje a je v rozsahu (null = bez hranice). */
+    fun isValid(year: Int, month: Int, day: Int, min: LocalDate?, max: LocalDate?): Boolean {
+        if (month !in 1..12 || day < 1 || day > lengthOf(year, month)) return false
+        val d = LocalDate.of(year, month, day)
+        return (min == null || !d.isBefore(min)) && (max == null || !d.isAfter(max))
+    }
+
+    /** Opraví vybranú trojicu na platný dátum: deň skráti na dĺžku mesiaca, potom ho dá do rozsahu. */
+    fun clamp(year: Int, month: Int, day: Int, min: LocalDate?, max: LocalDate?): LocalDate {
+        val m = month.coerceIn(1, 12)
+        val d = LocalDate.of(year, m, day.coerceIn(1, lengthOf(year, m)))
+        if (min != null && d.isBefore(min)) return min
+        if (max != null && d.isAfter(max)) return max
+        return d
+    }
+
+    /** Mesiac má aspoň jeden deň, ktorý sa dá vybrať (inak sa na bubne zašedne celý). */
+    fun monthHasValid(year: Int, month: Int, min: LocalDate?, max: LocalDate?): Boolean {
+        val ym = YearMonth.of(year, month.coerceIn(1, 12))
+        return (min == null || !ym.atEndOfMonth().isBefore(min)) && (max == null || !ym.atDay(1).isAfter(max))
     }
 }

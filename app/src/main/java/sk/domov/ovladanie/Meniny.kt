@@ -55,6 +55,27 @@ object Meniny {
         return "Zajtra ${datumKratko(z)} · ${text(z)}"
     }
 
+    /**
+     * Dni (mesiac, deň), na ktoré pripadá meno [meno] podľa kalendára; berie sa prvé slovo, bez ohľadu na veľkosť písmen
+     * a diakritiku. Prázdne, ak mena nie je v kalendári (zdrobneniny ako „Katka“ tam nie sú).
+     */
+    fun dniPreMeno(meno: String): List<Pair<Int, Int>> {
+        val hladane = normalizuj(meno.trim().split(Regex("\\s+")).firstOrNull().orEmpty())
+        if (hladane.isEmpty()) return emptyList()
+        val out = ArrayList<Pair<Int, Int>>()
+        for (m in 1..12) {
+            for (d in 1..31) {
+                val t = TABULKA[m - 1].getOrNull(d - 1) ?: continue
+                if (t.isBlank()) continue
+                if (t.split(", ").any { normalizuj(it) == hladane }) out += m to d
+            }
+        }
+        return out
+    }
+
+    private fun normalizuj(s: String): String =
+        java.text.Normalizer.normalize(s.trim().lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "")
+
     // [mesiac - 1][deň - 1]
     private val TABULKA: Array<Array<String>> = arrayOf(
         // Január

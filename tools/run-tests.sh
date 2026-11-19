@@ -66,6 +66,6 @@ java -jar "$OUT/meniny.jar"
 kotlinc -cp "$JSON" $S/Shopping.kt tools/ShoppingTest.kt -include-runtime -d "$OUT/shopping.jar" 2>/dev/null
 java -cp "$OUT/shopping.jar:$JSON" ShoppingTestKt
 # udalosti a narodeniny
-kotlinc -cp "$JSON" $S/Events.kt tools/EventsTest.kt -include-runtime -d "$OUT/events.jar" 2>/dev/null
+kotlinc -cp "$JSON" $S/Events.kt $S/Meniny.kt tools/EventsTest.kt -include-runtime -d "$OUT/events.jar" 2>/dev/null
 java -cp "$OUT/events.jar:$JSON" EventsTestKt
 echo "VŠETKY TESTY PREŠLI"

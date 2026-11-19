@@ -58,7 +58,7 @@ object EventsStore {
         val next = events(c).filter { it.id != id }
         prefs(c).edit()
             .putString(KEY_EVENTS, Events.toJson(next))
-            .putString(KEY_FIRED, Events.firedToJson(fired(c).filterNot { it.startsWith("$id|") }.toSet()))
+            .putString(KEY_FIRED, Events.firedToJson(Events.dropKeys(fired(c), id)))
             .apply()
         EventReminders.schedule(c)
         return next

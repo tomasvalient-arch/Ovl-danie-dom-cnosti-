@@ -97,10 +97,11 @@ fun main() {
     check("upozornenie bez veku", Events.notificationBody(once, LocalDate.of(2026, 12, 24), today) == "O 36 dní · štvrtok 24. decembra")
     check("riadok zoznamu", Events.dateLine(b, today) == "streda 25. novembra · každý rok · bude mať 30 rokov")
     check("riadok jednorazovej", Events.dateLine(once, today) == "štvrtok 24. decembra 2026")
-    check("riadok na Domove", Events.rowText(listOf(once, b), today) == "o týždeň · Narodeniny: Priateľka")
-    check("riadok na Domove: prázdne", Events.rowText(emptyList(), today) == "Pridať")
-    check("riadok na Domove: len prešlé", Events.rowText(listOf(past), today) == "Nič nadchádza")
-    check("podnadpis", Events.subtitle(listOf(b), today) == "Najbližšia: o týždeň")
+    check("tenký riadok na Domove: prázdne", Events.slimText(emptyList()) == "Pridať")
+    check("tenký riadok na Domove: nič sa nechystá", Events.slimText(listOf(b)) == "Nič sa nechystá")
+    check("pilulka: dnes, zajtra, dni", Events.pillText(0) == "Dnes" && Events.pillText(1) == "Zajtra" && Events.pillText(4) == "4 dni" && Events.pillText(7) == "7 dní")
+    check("vek v riadku", Events.ageCaption(b, today) == "30 rokov" && Events.ageCaption(once, today) == null)
+    check("skratka mesiaca", Events.monthShort(LocalDate.of(2027, 3, 14)) == "mar" && Events.monthShort(LocalDate.of(2027, 7, 17)) == "júl")
 
     // plán upozornení (náhľad v dialógu)
     val p1 = Events.plan(b, LocalDateTime.of(2026, 11, 10, 10, 0), t8)
@@ -117,6 +118,90 @@ fun main() {
     check("plán sedí s tým, čo pošle kontrola", Events.due(listOf(b), Events.afterSave(emptySet(), b, LocalDateTime.of(2026, 11, 22, 10, 0), t8), LocalDateTime.of(2026, 11, 25, 8, 0), t8).let { it.size == 1 && it[0].offset == 0 })
     check("rok narodenia: vek v zozname", Events.dateLine(ev("x", year = 1990), today) == "streda 25. novembra · každý rok · bude mať 36 rokov")
     check("dieťa narodené tento rok: bez veku", Events.dateLine(ev("x", year = 2026), today) == "streda 25. novembra · každý rok")
+
+
+    // okno upozornení: na Domove sa ukáže len to, čo sa blíži (najväčšia voľba vopred), nič sa nezbalí
+    val far = ev("far", name = "Lucia", m = 3, d = 14)                       // o 116 dní, okno 7 dní
+    val soonB = ev("b1", name = "Marek", m = 11, d = 22, offs = listOf(7, 1, 0)) // o 4 dni
+    val todayOnce = once.copy(id = "t", name = "Zubár", month = 11, day = 18, offs = listOf(1, 0))
+    val noOffs = ev("n", name = "Bez", m = 11, d = 20, offs = emptyList())
+    check("okno = najväčšia voľba vopred", Events.window(b) == 7 && Events.window(noOffs) == null && Events.window(once) == 7)
+    val g = Events.groups(listOf(far, b, soonB, todayOnce, noOffs, past), today)
+    check("čoskoro: všetky v okne, od najbližšieho", g.soon.map { it.id } == listOf("t", "b1", "e1"))
+    check("neskôr: mimo okna a bez upozornenia, podľa dátumu", g.later.map { it.id } == listOf("n", "far"))
+    check("prešlo: jednorazová, ktorá už prešla", g.past.map { it.id } == listOf("c"))
+    check("narodeniny o 300 dní nie sú v okne", Events.groups(listOf(ev("x", m = 9, d = 10)), today).let { it.soon.isEmpty() && it.later.size == 1 })
+    check("v deň udalosti je ešte v okne, deň po nej už nie", Events.groups(listOf(b), LocalDate.of(2026, 11, 25)).soon.size == 1 &&
+        Events.groups(listOf(b), LocalDate.of(2026, 11, 26)).soon.isEmpty())
+    check("okno začína presne týždeň vopred", Events.groups(listOf(b), LocalDate.of(2026, 11, 18)).soon.size == 1 &&
+        Events.groups(listOf(b), LocalDate.of(2026, 11, 17)).soon.isEmpty())
+    check("viac udalostí = viac riadkov (nič sa nezbalí)", Events.groups(List(8) { ev("m$it", name = "Osoba $it", m = 11, d = 20) }, today).soon.size == 8)
+    check("podnadpis", Events.subtitle(listOf(b, soonB, far, past), today) == "2 čoskoro · 1 neskôr · 1 prešlo")
+    check("podnadpis: nič sa nechystá", Events.subtitle(listOf(far), today) == "Nič sa nechystá · 1 neskôr")
+    check("podnadpis: prázdne", Events.subtitle(emptyList(), today) == "Zatiaľ žiadne udalosti")
+
+    // meniny: druhý dátum tej istej osoby
+    val km = ev("k", name = "Katka", m = 6, d = 2, offs = listOf(7, 0)).copy(meninyMonth = 11, meninyDay = 25)
+    check("osoba s meninami má dva dátumy", Events.hasMeniny(km) && Events.parts(km).size == 2 && Events.parts(b).size == 1)
+    val km2 = Events.parts(km)[1]
+    check("odvodené meniny: id, názov, každoročné, bez veku", km2.id == "k~n" && km2.isMeniny && km2.yearly && km2.year == 0 && km2.month == 11 && km2.day == 25 &&
+        Events.title(km2) == "Meniny: Katka" && Events.age(km2, LocalDate.of(2026, 11, 25)) == null && Events.partLabel(km2) == "Meniny")
+    check("id odvodenej položky sa vráti na uložený záznam", Events.baseId(km2.id) == "k" && Events.baseId("k") == "k")
+    check("meniny len pri narodeninách", !Events.hasMeniny(km.copy(birthday = false)) && Events.parts(km.copy(birthday = false)).size == 1)
+    check("meniny s neplatným dátumom sa ignorujú", !Events.hasMeniny(km.copy(meninyMonth = 13)) && !Events.hasMeniny(km.copy(meninyDay = 0)))
+    check("meniny o týždeň sú v okne, narodeniny až o rok mimo", Events.groups(listOf(km), today).soon.map { it.id } == listOf("k~n") && Events.groups(listOf(km), today).later.map { it.id } == listOf("k"))
+    check("pred narodeninami sú v okne narodeniny, meniny mimo", Events.groups(listOf(km), LocalDate.of(2026, 5, 28)).soon.map { it.id } == listOf("k") &&
+        Events.groups(listOf(km), LocalDate.of(2026, 5, 28)).later.map { it.id } == listOf("k~n"))
+    check("riadok menín", Events.dateLine(km2, today) == "streda 25. novembra · každý rok")
+    val dm = Events.due(listOf(km), emptySet(), LocalDateTime.of(2026, 11, 18, 8, 0), t8)
+    check("upozornenie na meniny príde samostatne", dm.size == 1 && dm[0].event.id == "k~n" && dm[0].offset == 7 && dm[0].keys == listOf("k~n|7|2026-11-25"))
+    val dm2 = Events.due(listOf(km), emptySet(), LocalDateTime.of(2026, 6, 2, 8, 0), t8)
+    check("v deň narodenín príde len narodeninové upozornenie", dm2.size == 1 && dm2[0].event.id == "k" && dm2[0].offset == 0)
+    val dm3 = Events.due(listOf(km), setOf("k~n|7|2026-11-25"), LocalDateTime.of(2026, 11, 20, 9, 0), t8)
+    check("odoslané meniny sa nezopakujú", dm3.isEmpty())
+    check("uloženie osoby s meninami vybaví upozornenia, ktorých čas už prešiel",
+        Events.afterSave(emptySet(), km, LocalDateTime.of(2026, 11, 22, 10, 0), t8) == setOf("k~n|7|2026-11-25"))
+    check("uloženie zahodí staré záznamy udalosti aj jej menín, cudzie ostanú",
+        Events.afterSave(setOf("k|7|2026-06-02", "k~n|0|2026-11-25", "k2|0|2026-12-01"), km, LocalDateTime.of(2026, 11, 10, 10, 0), t8) == setOf("k2|0|2026-12-01"))
+    check("odstránenie menín pri úprave zahodí ich záznamy", Events.afterSave(setOf("k~n|7|2026-11-25"), km.copy(meninyMonth = 0, meninyDay = 0), LocalDateTime.of(2026, 11, 10, 10, 0), t8).isEmpty())
+    check("dropKeys: id k sa nepomýli s k2 ani k~n", Events.dropKeys(setOf("k|0|2026-06-02", "k~n|0|2026-11-25", "k2|0|2026-12-01", "k2~n|0|2026-12-01"), "k") == setOf("k2|0|2026-12-01", "k2~n|0|2026-12-01"))
+    check("prune funguje aj pre kľúče menín", Events.prune(setOf("k~n|0|2026-11-25", "k~n|0|2026-11-10"), today) == setOf("k~n|0|2026-11-25"))
+    val pl = Events.planLinesFor(km, LocalDateTime.of(2026, 11, 22, 10, 0), t8)
+    check("plán pre osobu s meninami", pl == listOf(
+        "Narodeniny – príde o 8:00: 26. mája (1 týždeň vopred), 2. júna (v ten deň)",
+        "Meniny – príde o 8:00: 25. novembra (v ten deň)",
+        "Meniny – už prešlo, nepríde: 1 týždeň vopred",
+    ))
+    check("plán bez upozornení", Events.planLinesFor(km.copy(offsets = emptyList()), LocalDateTime.of(2026, 11, 22, 10, 0), t8) == listOf("Bez upozornenia – nepríde nič."))
+    check("plán pre obyčajnú udalosť sa nemení", Events.planLinesFor(b, LocalDateTime.of(2026, 11, 22, 10, 0), t8) == listOf("Príde o 8:00: 25. novembra (v ten deň)", "Už prešlo, nepríde: 1 týždeň vopred"))
+    val kmJson = Events.fromJson(Events.toJson(listOf(km, b)))
+    check("JSON s meninami tam a späť", kmJson == listOf(km, b) && kmJson[0].meninyMonth == 11 && kmJson[1].meninyMonth == 0)
+    check("starý záznam bez menín sa načíta", Events.fromJson("""[{"i":"s","n":"Ok","b":true,"y":1990,"m":3,"d":4,"r":true,"o":[7,0]}]""")[0].meninyMonth == 0)
+    check("meniny pri udalosti, ktorá nie je narodeniny, sa zahodia", Events.fromJson("""[{"i":"s","n":"Ok","b":false,"m":3,"d":4,"mm":5,"md":6,"o":[0]}]""")[0].meninyMonth == 0)
+    check("meniny s neplatným dňom sa zahodia", Events.fromJson("""[{"i":"s","n":"Ok","b":true,"m":3,"d":4,"mm":5,"md":40,"o":[0]}]""")[0].meninyDay == 0)
+
+    // dátum menín podľa mena z kalendára (Meniny.kt)
+    check("Katarína má meniny 25. 11.", Meniny.dniPreMeno("Katarína") == listOf(11 to 25))
+    check("bez diakritiky a veľkosti písmen", Meniny.dniPreMeno("katarina") == listOf(11 to 25) && Meniny.dniPreMeno("  EUGEN ") == listOf(11 to 18))
+    check("berie sa prvé slovo", Meniny.dniPreMeno("Katarína Nováková") == listOf(11 to 25))
+    check("zdrobnenina ani prázdny text nie sú v kalendári", Meniny.dniPreMeno("Katka").isEmpty() && Meniny.dniPreMeno("").isEmpty() && Meniny.dniPreMeno("   ").isEmpty())
+    check("rovnaké meno s diakritikou aj bez nej na jednom dni je jeden dátum", Meniny.dniPreMeno("Matiáš") == listOf(2 to 24) && Meniny.dniPreMeno("matias") == listOf(2 to 24))
+
+    // výber dátumu na bubnoch
+    val min = LocalDate.of(2026, 11, 18)
+    check("deň sa skráti na dĺžku mesiaca", DatePick.clamp(2027, 2, 31, null, null) == LocalDate.of(2027, 2, 28))
+    check("29. 2. v priestupnom roku ostane", DatePick.clamp(2028, 2, 29, null, null) == LocalDate.of(2028, 2, 29) && DatePick.clamp(DatePick.LEAP_YEAR, 2, 29, null, null) == LocalDate.of(2024, 2, 29))
+    check("mesiac 13 sa opraví na december", DatePick.clamp(2026, 13, 5, null, null) == LocalDate.of(2026, 12, 5))
+    check("minulý deň sa vráti na dnešok", DatePick.clamp(2026, 11, 17, min, null) == min && DatePick.clamp(2026, 3, 1, min, null) == min)
+    check("dnes a neskôr ostáva", DatePick.clamp(2026, 11, 18, min, null) == min && DatePick.clamp(2027, 1, 5, min, null) == LocalDate.of(2027, 1, 5))
+    check("narodený v budúcnosti sa vráti na dnešok", DatePick.clamp(2026, 12, 1, null, min) == min && DatePick.clamp(2026, 11, 18, null, min) == min && DatePick.clamp(1996, 11, 25, null, min) == LocalDate.of(1996, 11, 25))
+    check("zmena roka na minulý ťahá dátum na dnešok", DatePick.clamp(2026, 3, 14, min, null) == min)
+    check("platnosť dňa", DatePick.isValid(2027, 2, 28, null, null) && !DatePick.isValid(2027, 2, 29, null, null) && !DatePick.isValid(2027, 4, 31, null, null) && DatePick.isValid(2028, 2, 29, null, null))
+    check("platnosť dňa v rozsahu", !DatePick.isValid(2026, 11, 17, min, null) && DatePick.isValid(2026, 11, 18, min, null) && !DatePick.isValid(2026, 11, 19, null, min))
+    check("mesiac s platným dňom", !DatePick.monthHasValid(2026, 10, min, null) && DatePick.monthHasValid(2026, 11, min, null) && DatePick.monthHasValid(2027, 1, min, null) &&
+        DatePick.monthHasValid(2026, 11, null, min) && !DatePick.monthHasValid(2026, 12, null, min))
+    check("dĺžky mesiacov", DatePick.lengthOf(2027, 2) == 28 && DatePick.lengthOf(2028, 2) == 29 && DatePick.lengthOf(2027, 4) == 30 && DatePick.lengthOf(2027, 12) == 31)
+    check("dvojica bubnov: každý deň a mesiac sa dá vybrať v referenčnom roku", (1..12).all { m -> (1..DatePick.lengthOf(DatePick.LEAP_YEAR, m)).all { d -> DatePick.isValid(DatePick.LEAP_YEAR, m, d, null, null) } })
 
     // uloženie
     val list = listOf(b, once.copy(offsets = listOf(14, 3, 0)))

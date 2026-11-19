@@ -419,7 +419,7 @@ Na Domove je pod scénami tenký riadok **Nákup** (koľko zostáva kúpiť). Ť
 - Kód: `Shopping.kt` (logika bez Androidu), `ShoppingAndroid.kt` (uloženie), `ShoppingUi.kt` (riadok na Domove a obrazovka). Test: `tools/ShoppingTest.kt`.
 
 ## 22. Udalosti a narodeniny (od verzie 1.31)
-Na Domove je pod Nákupom riadok **Udalosti** (najbližšia udalosť a za koľko dní). Ťuknutím sa otvorí zoznam, hore je + na pridanie.
+Na Domove je pod Nákupom riadok **Udalosti**. Kým sa nič nechystá, je tenký („Nič sa nechystá“); keď sa nejaká udalosť dostane do okna upozornení, riadok sa predĺži a ukáže **všetky** čakajúce pod sebou (odpočet, názov, pri narodeninách vek). Ťuknutím sa otvorí zoznam, hore je + na pridanie.
 - Druh: **Udalosť** (jednorazová alebo „opakovať každý rok“) alebo **Narodeniny** (každý rok; ak zadáš rok narodenia, upozornenie napíše vek).
 - **Upozorniť vopred**: čipy V ten deň, 1 deň, 3 dni, 1 týždeň, 2 týždne, 30 dní (dá sa vybrať viac naraz) a políčko pre vlastný počet dní (0 – 365).
 - Čas upozornení je jeden pre všetky udalosti (predvolene 8:00, nastavíš dole v zozname). Na jednu udalosť je jedna notifikácia: „v ten deň“ nahradí „týždeň vopred“.
@@ -432,3 +432,9 @@ Na Domove je pod Nákupom riadok **Udalosti** (najbližšia udalosť a za koľko
 - Narodeniny: po zaškrtnutí „Poznám rok narodenia“ sa hneď otvorí výber dátumu, aby sa zvolil rok (najneskôr dnes). Kým sa rok nevyberie, uložiť sa nedá – appka rok nikdy nevymyslí. Pod dátumom je vidno riadok, ako ho zobrazí zoznam („streda 25. novembra · každý rok · bude mať 30 rokov“).
 - Jednorazová udalosť nemôže byť v minulosti (výber dátumu ju nepustí; staršiu pri úprave appka označí a nedá uložiť).
 - Pod voľbami „Upozorniť vopred“ dialóg ukáže, kedy upozornenia naozaj prídu („Príde o 8:00: 18. novembra (1 týždeň vopred), 25. novembra (v ten deň)“) a ktoré už prešli a nepríde („Už prešlo, nepríde: 1 týždeň vopred“). Logika je v `Events.plan` / `Events.planLines` (test `tools/EventsTest.kt`).
+
+### Verzia 1.32: okno upozornení, meniny, bubny
+- **Okno upozornení**: udalosť sa na Domove ukáže až od dňa, keď sa začína jej prvé upozornenie (najväčšia voľba „vopred“, napr. 7 dní). Narodeniny o 300 dní sa tam neukážu. Riadkov je toľko, koľko je udalostí v okne – nič sa nezbaľuje. Po dni udalosti riadok sám zmizne. Udalosť bez upozornenia sa na Domove nezobrazí (je len v zozname). Logika: `Events.window` / `Events.groups`.
+- **Zoznam** má skupiny **Čoskoro** (v okne, s odpočtom), **Neskôr** (len dátum, bez „o 300 dní“) a **Prešlo** (jednorazové, ktoré už prešli, aby sa dali zmazať).
+- **Meniny**: pri narodeninách je „Pridať aj meniny“. Meniny sú druhý dátum (deň a mesiac) tej istej osoby s rovnakými upozorneniami; uložené sú v jednom zázname (`meninyMonth`, `meninyDay`) a pre upozornenia a zoznam sa rozložia na dve položky (`Events.parts`, id meníň = id + `~n`). Ak je meno v kalendári mien (`Meniny.dniPreMeno`, prvé slovo, bez diakritiky) na jednom dni, dátum sa predvyplní, inak sa otvoria bubny. Úprava aj zmazanie menín ide cez záznam osoby; odoslané upozornenia sa evidujú osobitne (`id~n|…`) a pri uložení či zmazaní sa čistia spolu (`Events.dropKeys`).
+- **Výber dátumu na bubnoch** (`WheelPicker.kt`, čistá logika `DatePick` v `Events.kt`): deň, mesiac a rok sa točia ako bubny. Deň a mesiac sa zalamujú, rok nie. Po zastavení sa dátum opraví: deň sa skráti na dĺžku mesiaca (31. → 28. 2.) a dátum sa dá do rozsahu – jednorazová udalosť nie je v minulosti, narodený nie je v budúcnosti. Hodnoty, ktoré sa nedajú vybrať, sú zašedené. Bez roku (meniny, každoročné udalosti) sú len dva bubny a v priestupnom referenčnom roku sa dá vybrať aj 29. 2.
