@@ -530,7 +530,12 @@ private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDele
 
     if (picking == 1) {
         WheelDateDialog(
-            title = dateTitle,
+            title = when {
+                birthWithYear -> "Dátum narodenia"
+                birthday -> "Narodeniny"
+                oneTime -> "Dátum udalosti"
+                else -> "Deň a mesiac"
+            },
             withYear = birthWithYear || oneTime,
             initial = Events.safeDate(
                 if (birthWithYear) (birthYear ?: (today.year - 30)) else if (oneTime) eventYear else DatePick.LEAP_YEAR,
@@ -554,7 +559,7 @@ private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDele
     }
     if (picking == 2) {
         WheelDateDialog(
-            title = "Dátum menín (deň a mesiac)",
+            title = "Dátum menín",
             withYear = false,
             initial = Events.safeDate(DatePick.LEAP_YEAR, if (meninyMonth > 0) meninyMonth else month, if (meninyMonth > 0) meninyDay else day),
             yearRange = DatePick.LEAP_YEAR..DatePick.LEAP_YEAR,

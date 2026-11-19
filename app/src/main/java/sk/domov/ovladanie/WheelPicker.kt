@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,9 +28,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -100,6 +105,9 @@ internal fun WheelDateDialog(
     }
 
     val chosen = DatePick.clamp(year, month, day, minDate, maxDate)
+    // panel siaha až na spodok obrazovky: odstup od systémovej navigácie (ak ju okno nehlási, pevná rezerva pre tlačidlá)
+    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val bottomPad = if (navBottom > 0.dp) navBottom + 16.dp else 64.dp
     val noClick = remember { MutableInteractionSource() }
     val outsideClick = remember { MutableInteractionSource() }
 
@@ -113,7 +121,7 @@ internal fun WheelDateDialog(
                 shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                 color = scheme.surfaceContainerLow,
             ) {
-                Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 24.dp)) {
+                Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = bottomPad)) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.CenterHorizontally)
@@ -121,7 +129,16 @@ internal fun WheelDateDialog(
                             .clip(RoundedCornerShape(2.dp))
                             .background(scheme.outlineVariant),
                     )
-                    Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+                    // Zrušiť a Hotovo sú hore, aby ich nikdy neprekryla systémová navigácia
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        TextButton(onClick = onDismiss) { Text("Zrušiť") }
+                        Spacer(Modifier.width(4.dp))
+                        Button(onClick = { onConfirm(chosen) }) { Text("Hotovo") }
+                    }
                     val dayWeight = if (withYear) 0.24f else 0.4f
                     val monthWeight = if (withYear) 0.46f else 0.6f
                     Row(modifier = Modifier.fillMaxWidth()) {
@@ -179,11 +196,6 @@ internal fun WheelDateDialog(
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         )
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(48.dp)) { Text("Zrušiť") }
-                        Button(onClick = { onConfirm(chosen) }, modifier = Modifier.weight(1f).height(48.dp)) { Text("Hotovo") }
                     }
                 }
             }
