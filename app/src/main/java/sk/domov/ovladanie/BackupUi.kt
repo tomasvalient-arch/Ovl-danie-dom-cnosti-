@@ -307,7 +307,7 @@ fun BackupScreen(onBack: () -> Unit) {
             },
             confirmButton = {
                 DialogPrimaryButton(enabled = restorePw.isNotEmpty(), onClick = {
-                    val data = fileData ?: return@TextButton
+                    val data = fileData ?: return@DialogPrimaryButton
                     work("Overujem heslo…") {
                         val r = withContext(Dispatchers.IO) { runCatching { BackupPayload.open(data, restorePw.toCharArray()) } }
                         r.onSuccess { p ->
