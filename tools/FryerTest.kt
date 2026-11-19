@@ -62,6 +62,9 @@ fun main() {
     check("full list rejects new", FryerRecipes.upsert(full, FryerRecipes.fromState("zz", "Nový", cur)) == full && !FryerRecipes.canAdd(full, "Nový"))
     check("full list allows overwrite", FryerRecipes.canAdd(full, "r3"))
     check("overwrite keeps name and id", FryerRecipes.overwrite(l3, "c", Fryer.read(spec, v + ("6" to 150) + ("9" to 5)))[1].let { it.id == "c" && it.name == "Kura" && it.minutes == 5 && it.tempC == 150 })
+    val noMode = listOf(r1.copy(id = "n", name = "Bez režimu", mode = ""))
+    check("overwrite keeps no-mode recipe without mode", FryerRecipes.overwrite(noMode, "n", Fryer.read(spec, v + ("6" to 150) + ("9" to 5)))[0].let { it.mode == "" && it.minutes == 5 && it.tempC == 150 })
+    check("overwrite recipe with mode takes current mode", FryerRecipes.overwrite(listOf(r1.copy(mode = "Cake")), "a", Fryer.read(spec, v))[0].mode == "Chips")
     // použitie receptu na fritéze: len režim, čas, teplota – nikdy štart (2) ani hlavný vypínač (1)
     val now = Fryer.read(spec, v + ("6" to 150) + ("9" to 5))
     val steps = FryerRecipes.steps(spec, r1.copy(mode = "Cake"), now)
@@ -72,7 +75,7 @@ fun main() {
     check("steps none when equal", FryerRecipes.steps(spec, r1.copy(minutes = 5, tempC = 150), now).isEmpty())
     // úprava a predvyplnenie
     val dr = FryerRecipes.draft(Fryer.read(spec, v))
-    check("draft from off fryer (time 0 -> 15)", dr.id == "" && dr.name == "" && dr.mode == "Chips" && dr.minutes == 15 && dr.tempC == 200)
+    check("draft from off fryer (time 0 -> 15, no mode)", dr.id == "" && dr.name == "" && dr.mode == "" && dr.minutes == 15 && dr.tempC == 200)
     check("draft keeps valid time", FryerRecipes.draft(Fryer.read(spec, v + ("9" to 22) + ("6" to 183))).let { it.minutes == 22 && it.tempC == 185 })
     val upd = FryerRecipes.update(l3, l3[1].copy(name = " Kuracie  prsia ", mode = " Cake ", minutes = 99, tempC = 51))
     check("update fixes values", upd[1].name == "Kuracie prsia" && upd[1].mode == "Cake" && upd[1].minutes == 60 && upd[1].tempC == 80 && upd[0] == l3[0])

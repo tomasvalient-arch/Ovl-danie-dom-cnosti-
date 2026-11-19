@@ -132,11 +132,11 @@ object FryerRecipes {
         tempC = snapTemp(st.tempC),
     )
 
-    /** Predvyplnenie nového receptu zo stavu fritézy (čas mimo rozsahu, napr. 0 vo vypnutom stave, sa nahradí 15 min). */
+    /** Predvyplnenie nového receptu zo stavu fritézy: čas a teplota (čas mimo rozsahu, napr. 0 vo vypnutom stave, sa nahradí 15 min). Režim je prázdny – recept ho mení, len keď si ho vyberieš. */
     fun draft(st: FryerState): FryerRecipe = FryerRecipe(
         id = "",
         name = "",
-        mode = st.mode.trim(),
+        mode = "",
         minutes = st.minutes.takeIf { it in Fryer.TIME_MIN..Fryer.TIME_MAX } ?: 15,
         tempC = snapTemp(st.tempC),
     )
@@ -184,9 +184,11 @@ object FryerRecipes {
         return list.map { if (it.id == id) it.copy(name = clean) else it }
     }
 
-    /** Nahradí nastavenie receptu aktuálnym (názov a id zostanú). */
+    /** Nahradí čas a teplotu receptu aktuálnymi (názov a id zostanú); recept bez režimu zostane bez režimu, recept s režimom si vezme aktuálny. */
     fun overwrite(list: List<FryerRecipe>, id: String, st: FryerState): List<FryerRecipe> =
-        list.map { if (it.id == id) fromState(it.id, it.name, st).copy(name = it.name) else it }
+        list.map {
+            if (it.id == id) fromState(it.id, it.name, st).copy(name = it.name, mode = if (it.mode.isBlank()) "" else st.mode.trim()) else it
+        }
 
     /** Je recept práve nastavený na fritéze? */
     fun matches(r: FryerRecipe, st: FryerState): Boolean =

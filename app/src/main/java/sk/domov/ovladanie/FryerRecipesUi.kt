@@ -163,7 +163,7 @@ fun FryerRecipesCard(
             },
         )
         is RecipeAction.Overwrite -> {
-            val now = FryerRecipes.fromState(a.recipe.id, a.recipe.name, st)
+            val now = FryerRecipes.overwrite(listOf(a.recipe), a.recipe.id, st).first()
             DomovAlert(
                 onDismissRequest = { action = null },
                 icon = { Icon(Sym.refresh, null) },
@@ -346,12 +346,12 @@ private fun RecipeEditDialog(
             DomovTextField(
                 value = mode,
                 onValueChange = { mode = it.take(40) },
-                label = { Text("Režim (voliteľné)") },
+                label = { Text("Režim fritézy (nepovinné)") },
                 singleLine = true,
                 supportingText = {
                     Text(
-                        if (modes.isEmpty()) "Názov presne tak, ako ho fritéza hlási (napr. Chips). Prázdne = režim sa nemení."
-                        else "Ťukni na režim, ktorý appka už videla. Prázdne = režim sa nemení.",
+                        "Vstavaný program fritézy (napr. Chips, Cake). Nechaj prázdne, ak chceš len čas a teplotu – režim sa potom nezmení." +
+                            if (modes.isEmpty()) " Názov musí byť presne taký, ako ho fritéza hlási." else " Môžeš ťuknúť na režim, ktorý appka už videla.",
                     )
                 },
                 modifier = Modifier.fillMaxWidth(),
