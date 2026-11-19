@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,17 +68,26 @@ internal fun DomovDialog(
     val scroll = rememberScrollState()
     val shown = remember { MutableTransitionState(false).apply { targetState = true } }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    // decorFitsSystemWindows = false: okno je na celú obrazovku a okraje (stavový riadok, navigačná lišta, klávesnica, výrez)
+    // si ošetríme sami cez WindowInsets – inak ich dialóg nehlási spoľahlivo a päta s tlačidlami sa mohla dostať pod displej
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
         // okno uprostred obrazovky (mimo systémových líšt a klávesnice); ťuk mimo okna ho zavrie
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))
+                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .clickable(interactionSource = outsideClick, indication = null, onClick = onDismiss)
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
-            val maxH = maxHeight
+            // poistka: aj keby okraje neboli nahlásené, okno nikdy nepresiahne viditeľnú časť displeja
+            // (v pevnej päte je tlačidlo, ktoré sa musí dať stlačiť)
+            val config = LocalConfiguration.current
+            val reserve = if (config.screenHeightDp >= config.screenWidthDp) 112.dp else 56.dp
+            val maxH = minOf(maxHeight, (config.screenHeightDp.dp - reserve).coerceAtLeast(240.dp))
             AnimatedVisibility(
                 visibleState = shown,
                 enter = fadeIn(animationSpec = tween(140)) + scaleIn(animationSpec = tween(180), initialScale = 0.92f),
