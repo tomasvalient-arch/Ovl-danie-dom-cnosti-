@@ -122,6 +122,8 @@ fun FryerControls(
             }
         }
 
+        FryerRecipesCard(deviceId = deviceId, spec = spec, st = st, enabled = enabled, onCommand = onCommand)
+
         if (st.running) {
             Button(
                 onClick = { onCommand(Fryer.start(spec, false)) },

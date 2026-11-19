@@ -1,4 +1,6 @@
 import sk.domov.ovladanie.Fryer
+import sk.domov.ovladanie.FryerRecipe
+import sk.domov.ovladanie.FryerRecipes
 
 private var failed = 0
 private fun check(name: String, ok: Boolean) {
@@ -32,5 +34,44 @@ fun main() {
     check("not fryer: light", Fryer.detect(mapOf("20" to true, "21" to "white", "22" to 500)) == null)
     check("not fryer: dp2 not bool", Fryer.detect(v + ("2" to "x")) == null)
     check("not fryer: missing temp", Fryer.detect(v - "6") == null)
+    // ---- vlastné recepty
+    val cur = Fryer.read(spec, v + ("6" to 183) + ("9" to 18))
+    val r1 = FryerRecipes.fromState("a", "  Hranolky   domáce ", cur)
+    check("recipe name cleaned", r1.name == "Hranolky domáce")
+    check("recipe from state snaps temp", r1.tempC == 185 && r1.minutes == 18 && r1.mode == "Chips")
+    check("recipe time 0 -> 1", FryerRecipes.fromState("a", "x", Fryer.read(spec, v + ("9" to 0))).minutes == 1)
+    check("recipe temp clamp", FryerRecipes.fromState("a", "x", Fryer.read(spec, v + ("6" to 250))).tempC == 200)
+    check("name max", FryerRecipes.cleanName("x".repeat(80)).length == FryerRecipes.NAME_MAX)
+    check("describe", FryerRecipes.describe(r1) == "Chips · 18 min · 185 °C")
+    check("describe no mode", FryerRecipes.describe(r1.copy(mode = "")) == "18 min · 185 °C")
+    val l1 = FryerRecipes.upsert(emptyList(), r1)
+    check("upsert add", l1 == listOf(r1))
+    val r2 = FryerRecipes.fromState("b", "hranolky DOMÁCE", Fryer.read(spec, v + ("6" to 200) + ("9" to 20)))
+    val l2 = FryerRecipes.upsert(l1, r2)
+    check("upsert same name overwrites (keeps id and place)", l2.size == 1 && l2[0].id == "a" && l2[0].minutes == 20 && l2[0].tempC == 200)
+    val l3 = FryerRecipes.upsert(l2, FryerRecipes.fromState("c", "Kura", cur))
+    check("upsert second", l3.size == 2 && l3[1].name == "Kura")
+    check("find ignores case", FryerRecipes.find(l3, "KURA")?.id == "c" && FryerRecipes.find(l3, "  ") == null)
+    check("rename ok", FryerRecipes.rename(l3, "c", "Kuracie")[1].name == "Kuracie")
+    check("rename to clash ignored", FryerRecipes.rename(l3, "c", "hranolky domáce") == l3)
+    check("rename to empty ignored", FryerRecipes.rename(l3, "c", "  ") == l3)
+    check("rename to itself differing case", FryerRecipes.rename(l3, "c", "KURA")[1].name == "KURA")
+    check("remove", FryerRecipes.remove(l3, "a").map { it.id } == listOf("c"))
+    val full = (1..FryerRecipes.MAX_RECIPES).fold(emptyList<FryerRecipe>()) { acc, i -> FryerRecipes.upsert(acc, FryerRecipes.fromState("id$i", "R$i", cur)) }
+    check("full list size", full.size == FryerRecipes.MAX_RECIPES)
+    check("full list rejects new", FryerRecipes.upsert(full, FryerRecipes.fromState("zz", "Nový", cur)) == full && !FryerRecipes.canAdd(full, "Nový"))
+    check("full list allows overwrite", FryerRecipes.canAdd(full, "r3"))
+    check("overwrite keeps name and id", FryerRecipes.overwrite(l3, "c", Fryer.read(spec, v + ("6" to 150) + ("9" to 5)))[1].let { it.id == "c" && it.name == "Kura" && it.minutes == 5 && it.tempC == 150 })
+    // použitie receptu na fritéze: len režim, čas, teplota – nikdy štart (2) ani hlavný vypínač (1)
+    val now = Fryer.read(spec, v + ("6" to 150) + ("9" to 5))
+    val steps = FryerRecipes.steps(spec, r1.copy(mode = "Cake"), now)
+    check("steps order mode,time,temp", steps == listOf(mapOf<String, Any>("3" to "Cake"), mapOf<String, Any>("9" to 18), mapOf<String, Any>("6" to 185)))
+    check("steps never start/power", steps.none { it.containsKey("2") || it.containsKey("1") })
+    check("steps skip equal values", FryerRecipes.steps(spec, r1.copy(mode = "Chips", minutes = 5), now) == listOf(mapOf<String, Any>("6" to 185)))
+    check("steps blank mode keeps mode", FryerRecipes.steps(spec, r1.copy(mode = ""), now).none { it.containsKey("3") })
+    check("steps none when equal", FryerRecipes.steps(spec, r1.copy(minutes = 5, tempC = 150), now).isEmpty())
+    check("matches", FryerRecipes.matches(r1.copy(minutes = 5, tempC = 150), now) && !FryerRecipes.matches(r1, now))
+    check("matches blank mode", FryerRecipes.matches(r1.copy(mode = "", minutes = 5, tempC = 150), now))
+    check("matches other mode", !FryerRecipes.matches(r1.copy(mode = "Cake", minutes = 5, tempC = 150), now))
     println(if (failed == 0) "FRYER PASSED" else "FRYER FAILED: $failed")
 }

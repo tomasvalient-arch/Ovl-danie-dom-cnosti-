@@ -133,6 +133,7 @@ object BackupSpec {
         "domov_household" to { k -> k == "id" || k == "name" || k == "key" || k == "members" },
         "domov_fryer" to { k -> k.startsWith("set_") },
         "domov_modes" to { k -> k.startsWith("modes_") },
+        "domov_recipes" to { k -> k.startsWith("recipes_") }, // od 1.34 (vlastné recepty fritézy)
         "domov_widgets" to { k -> k.startsWith("w_") },
         "domov_ui" to { _ -> true },
         "domov_weather" to { k -> k == "settings" }, // od 1.12 (len nastavenie, nie stiahnuté údaje)
@@ -438,7 +439,7 @@ object Backup {
                 "domov_scenes" -> if (c["night"] == null) (b["night"] as? String)?.let { m["night"] = mapIds(it, idMap) }
                 "domov_household" -> for ((k, v) in b) if (k !in m) m[k] = v
                 else -> for ((k, v) in b) {
-                    val prefix = listOf("set_", "modes_").firstOrNull { k.startsWith(it) }
+                    val prefix = listOf("set_", "modes_", "recipes_").firstOrNull { k.startsWith(it) }
                     val key = if (prefix != null) prefix + (idMap[k.removePrefix(prefix)] ?: k.removePrefix(prefix)) else k
                     val owner = if (prefix != null) key.removePrefix(prefix) else null
                     if (key !in m || (owner != null && owner in takenFromBackup)) m[key] = v
