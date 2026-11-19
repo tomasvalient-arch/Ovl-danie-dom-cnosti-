@@ -30,7 +30,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 /**
- * Ovládanie fritézy ako v Tuya appke: stav, režim, čas, teplota a tlačidlo Štart/Stop.
+ * Ovládanie fritézy ako v Tuya appke: stav, čas, teplota a tlačidlo Štart/Stop.
  * [enabled] je pravda, keď je fritéza zapnutá a máme spojenie.
  */
 @Composable
@@ -41,13 +41,8 @@ fun FryerControls(
     enabled: Boolean,
     onCommand: (Map<String, Any>) -> Unit,
 ) {
-    val context = LocalContext.current
     val st = Fryer.read(spec, values)
     var confirmStart by remember { mutableStateOf(false) }
-    var customMode by remember { mutableStateOf(false) }
-
-    // Režimy, ktoré appka už videla (zariadenie ich neposiela ako zoznam).
-    val modes = (ModeMemory.list(context, deviceId) + st.mode).filter { it.isNotBlank() }.distinct()
 
     // Stlmená (zamknutá) je len priama obsluha; recepty sa dajú vytvárať a upravovať aj pri vypnutej fritéze
     val dim = Modifier.alpha(if (enabled) 1f else 0.45f)
@@ -55,7 +50,7 @@ fun FryerControls(
         Column(modifier = dim, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (!enabled) {
                 Text(
-                    text = "Zapni fritézu, aby si mohol nastavovať režim, čas a teplotu.",
+                    text = "Zapni fritézu, aby si mohol nastavovať čas a teplotu.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -66,35 +61,6 @@ fun FryerControls(
                         Text(
                             text = Fryer.statusLabel(st.statusRaw) +
                                 (st.remainingMin?.takeIf { st.running && it > 0 }?.let { " · zostáva $it min" } ?: ""),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Režim", style = MaterialTheme.typography.titleMedium)
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            modes.forEach { name ->
-                                FilterChip(
-                                    selected = name == st.mode,
-                                    onClick = { if (enabled && name != st.mode) onCommand(Fryer.mode(spec, name)) },
-                                    label = { Text(name) },
-                                    enabled = enabled,
-                                )
-                            }
-                            FilterChip(
-                                selected = false,
-                                onClick = { customMode = true },
-                                label = { Text("Iný…") },
-                                enabled = enabled,
-                            )
-                        }
-                        Text(
-                            text = "Zoznam režimov sa dopĺňa sám: appka si zapamätá každý režim, ktorý sa raz objaví " +
-                                "(napr. keď ho vyberieš v Tuya appke). Iný režim môžeš zadať aj ručne cez Iný….",
-                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -124,7 +90,7 @@ fun FryerControls(
 
         }
 
-        FryerRecipesCard(deviceId = deviceId, spec = spec, st = st, modes = modes, enabled = enabled, onCommand = onCommand)
+        FryerRecipesCard(deviceId = deviceId, spec = spec, st = st, enabled = enabled, onCommand = onCommand)
 
         Column(modifier = dim) {
             if (st.running) {
@@ -151,7 +117,7 @@ fun FryerControls(
             title = { Text("Spustiť varenie?") },
             text = {
                 Text(
-                    "Fritéza sa začne ohrievať: ${st.mode.ifBlank { "režim" }}, ${st.minutes} min, ${st.tempC} °C. " +
+                    "Fritéza sa začne ohrievať: ${st.minutes} min, ${st.tempC} °C. " +
                         "Skontroluj, že je v nej jedlo a že je na to vhodný čas."
                 )
             },
@@ -159,18 +125,6 @@ fun FryerControls(
                 DialogPrimaryButton(onClick = { confirmStart = false; onCommand(Fryer.start(spec, true)) }) { Text("Spustiť") }
             },
             dismissButton = { DialogTextButton(onClick = { confirmStart = false }) { Text("Zrušiť") } },
-        )
-    }
-    if (customMode) {
-        ValueDialog(
-            title = "Názov režimu",
-            initial = st.mode,
-            numeric = false,
-            onDismiss = { customMode = false },
-            onConfirm = { text ->
-                customMode = false
-                if (text.isNotBlank()) onCommand(Fryer.mode(spec, text))
-            },
         )
     }
 }

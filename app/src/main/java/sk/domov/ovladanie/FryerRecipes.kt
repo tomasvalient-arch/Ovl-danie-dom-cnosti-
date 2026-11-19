@@ -23,7 +23,7 @@ object RecipeStore {
     fun newId(): String = java.util.UUID.randomUUID().toString().take(8)
 
     internal fun toJson(recipes: List<FryerRecipe>): String = JSONArray(recipes.map {
-        JSONObject().put("id", it.id).put("name", it.name).put("mode", it.mode).put("minutes", it.minutes).put("temp", it.tempC)
+        JSONObject().put("id", it.id).put("name", it.name).put("minutes", it.minutes).put("temp", it.tempC)
     }).toString()
 
     internal fun parse(raw: String): List<FryerRecipe> = try {
@@ -39,7 +39,6 @@ object RecipeStore {
                 FryerRecipe(
                     id = id,
                     name = name,
-                    mode = o.optString("mode"),
                     minutes = o.optInt("minutes", Fryer.TIME_MIN).coerceIn(Fryer.TIME_MIN, Fryer.TIME_MAX),
                     tempC = FryerRecipes.snapTemp(o.optInt("temp", Fryer.TEMP_MAX)),
                 ),

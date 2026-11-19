@@ -97,13 +97,12 @@ object Fryer {
 }
 
 /**
- * Vlastný recept fritézy: názov + režim + čas + teplota (štart sa v recepte nikdy neukladá ani nespúšťa).
- * [mode] je prázdny, ak zariadenie režim nemá (potom sa režim pri nastavení nemení).
+ * Vlastný recept fritézy: názov + čas + teplota. Štart sa v recepte nikdy neukladá ani nespúšťa a režim fritézy
+ * (hodnota 3) sa nemení – ostáva taký, aký fritéza má.
  */
 data class FryerRecipe(
     val id: String,
     val name: String,
-    val mode: String,
     val minutes: Int,
     val tempC: Int,
 )
@@ -127,16 +126,14 @@ object FryerRecipes {
     fun fromState(id: String, name: String, st: FryerState): FryerRecipe = FryerRecipe(
         id = id,
         name = cleanName(name),
-        mode = st.mode.trim(),
         minutes = st.minutes.coerceIn(Fryer.TIME_MIN, Fryer.TIME_MAX),
         tempC = snapTemp(st.tempC),
     )
 
-    /** Predvyplnenie nového receptu zo stavu fritézy: čas a teplota (čas mimo rozsahu, napr. 0 vo vypnutom stave, sa nahradí 15 min). Režim je prázdny – recept ho mení, len keď si ho vyberieš. */
+    /** Predvyplnenie nového receptu zo stavu fritézy (čas mimo rozsahu, napr. 0 vo vypnutom stave, sa nahradí 15 min). */
     fun draft(st: FryerState): FryerRecipe = FryerRecipe(
         id = "",
         name = "",
-        mode = "",
         minutes = st.minutes.takeIf { it in Fryer.TIME_MIN..Fryer.TIME_MAX } ?: 15,
         tempC = snapTemp(st.tempC),
     )
@@ -149,7 +146,6 @@ object FryerRecipes {
         if (clash != null && clash.id != recipe.id) return list
         val fixed = recipe.copy(
             name = clean,
-            mode = recipe.mode.trim(),
             minutes = recipe.minutes.coerceIn(Fryer.TIME_MIN, Fryer.TIME_MAX),
             tempC = snapTemp(recipe.tempC),
         )
@@ -184,28 +180,22 @@ object FryerRecipes {
         return list.map { if (it.id == id) it.copy(name = clean) else it }
     }
 
-    /** Nahradí čas a teplotu receptu aktuálnymi (názov a id zostanú); recept bez režimu zostane bez režimu, recept s režimom si vezme aktuálny. */
+    /** Nahradí čas a teplotu receptu aktuálnymi (názov a id zostanú). */
     fun overwrite(list: List<FryerRecipe>, id: String, st: FryerState): List<FryerRecipe> =
-        list.map {
-            if (it.id == id) fromState(it.id, it.name, st).copy(name = it.name, mode = if (it.mode.isBlank()) "" else st.mode.trim()) else it
-        }
+        list.map { if (it.id == id) fromState(it.id, it.name, st).copy(name = it.name) else it }
 
     /** Je recept práve nastavený na fritéze? */
-    fun matches(r: FryerRecipe, st: FryerState): Boolean =
-        (r.mode.isBlank() || r.mode == st.mode) && r.minutes == st.minutes && r.tempC == st.tempC
+    fun matches(r: FryerRecipe, st: FryerState): Boolean = r.minutes == st.minutes && r.tempC == st.tempC
 
     /**
-     * Príkazy na nastavenie receptu, jeden po druhom: režim, čas, teplota (rovnaké jednotlivé zápisy ako posuvníky,
-     * lebo režim môže na zariadení prepísať čas a teplotu, preto ide prvý). Hodnoty, ktoré už sedia, sa nepošlú.
-     * Nikdy nie je medzi nimi štart ani hlavný vypínač.
+     * Príkazy na nastavenie receptu, jeden po druhom: čas a teplota (rovnaké jednotlivé zápisy ako posuvníky).
+     * Hodnoty, ktoré už sedia, sa nepošlú. Nikdy tu nie je štart, hlavný vypínač ani režim.
      */
     fun steps(spec: FryerSpec, r: FryerRecipe, st: FryerState): List<Map<String, Any>> = buildList {
-        if (r.mode.isNotBlank() && r.mode != st.mode) add(Fryer.mode(spec, r.mode))
         if (r.minutes != st.minutes) add(Fryer.cookTime(spec, r.minutes.toFloat()))
         if (r.tempC != st.tempC) add(Fryer.temperature(spec, r.tempC.toFloat()))
     }
 
-    /** Krátky popis: „Chips · 18 min · 200 °C“. */
-    fun describe(r: FryerRecipe): String =
-        listOf(r.mode.takeIf { it.isNotBlank() }, "${r.minutes} min", "${r.tempC} °C").filterNotNull().joinToString(" · ")
+    /** Krátky popis: „18 min · 200 °C“. */
+    fun describe(r: FryerRecipe): String = "${r.minutes} min · ${r.tempC} °C"
 }

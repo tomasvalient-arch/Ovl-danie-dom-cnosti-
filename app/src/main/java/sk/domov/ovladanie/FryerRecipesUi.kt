@@ -54,7 +54,7 @@ private sealed interface RecipeAction {
 }
 
 /**
- * Karta „Recepty“ v detaile fritézy. Recept = názov + režim + čas + teplota. Dá sa vytvoriť a upraviť kedykoľvek (aj pri
+ * Karta „Recepty“ v detaile fritézy. Recept = názov + čas + teplota. Dá sa vytvoriť a upraviť kedykoľvek (aj pri
  * vypnutej fritéze – nezávisle od jej stavu); nastaviť na fritéze sa dá, keď je zapnutá ([enabled]). Recept fritézu
  * nikdy nespustí – štart je vždy zvlášť (a s potvrdením).
  */
@@ -63,7 +63,6 @@ fun FryerRecipesCard(
     deviceId: String,
     spec: FryerSpec,
     st: FryerState,
-    modes: List<String>,
     enabled: Boolean,
     onCommand: (Map<String, Any>) -> Unit,
 ) {
@@ -85,7 +84,7 @@ fun FryerRecipesCard(
             return
         }
         Toast.makeText(context, "Nastavujem: ${r.name}", Toast.LENGTH_SHORT).show()
-        // po jednom zápise (režim môže prepísať čas a teplotu, preto ide prvý); zariadenie potrebuje chvíľu medzi príkazmi
+        // po jednom zápise; zariadenie potrebuje chvíľu medzi príkazmi
         scope.launch {
             steps.forEachIndexed { i, step ->
                 if (i > 0) delay(700)
@@ -110,7 +109,7 @@ fun FryerRecipesCard(
             }
             if (recipes.isEmpty()) {
                 Text(
-                    "Ulož si obľúbenú kombináciu režimu, času a teploty (napr. hranolky, 18 min, 200 °C) " +
+                    "Ulož si obľúbenú kombináciu času a teploty (napr. hranolky, 18 min, 200 °C) " +
                         "a nastav ju jedným ťuknutím. Recept fritézu nespustí, Štart ostáva zvlášť.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -143,7 +142,6 @@ fun FryerRecipesCard(
         RecipeAction.New -> RecipeEditDialog(
             editing = null,
             draft = FryerRecipes.draft(st),
-            modes = modes,
             existing = recipes,
             onDismiss = { action = null },
             onConfirm = { r ->
@@ -154,7 +152,6 @@ fun FryerRecipesCard(
         is RecipeAction.Edit -> RecipeEditDialog(
             editing = a.recipe,
             draft = a.recipe,
-            modes = modes,
             existing = recipes,
             onDismiss = { action = null },
             onConfirm = { r ->
@@ -204,7 +201,7 @@ fun FryerRecipesCard(
             text = {
                 Text(
                     "Zmeniť jej nastavenie na „${a.recipe.name}“ (${FryerRecipes.describe(a.recipe)})? " +
-                        "Varenie sa tým nezastaví ani nespustí nanovo, mení sa len režim, čas a teplota.",
+                        "Varenie sa tým nezastaví ani nespustí nanovo, mení sa len čas a teplota.",
                 )
             },
             confirmButton = {
@@ -275,7 +272,7 @@ private fun RecipeRow(
 }
 
 /**
- * Okno na vytvorenie (nový) alebo úpravu ([editing]) receptu: názov, režim, čas a teplota. Pri novom receptu sú hodnoty
+ * Okno na vytvorenie (nový) alebo úpravu ([editing]) receptu: názov, čas a teplota. Pri novom receptu sú hodnoty
  * predvyplnené z fritézy ([draft]), dajú sa ale zmeniť, takže funguje aj pri vypnutej fritéze. Nový recept s existujúcim
  * názvom ten starý prepíše.
  */
@@ -283,14 +280,12 @@ private fun RecipeRow(
 private fun RecipeEditDialog(
     editing: FryerRecipe?,
     draft: FryerRecipe,
-    modes: List<String>,
     existing: List<FryerRecipe>,
     onDismiss: () -> Unit,
     onConfirm: (FryerRecipe) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     var name by remember { mutableStateOf(draft.name) }
-    var mode by remember { mutableStateOf(draft.mode) }
     var minutes by remember { mutableIntStateOf(draft.minutes.coerceIn(Fryer.TIME_MIN, Fryer.TIME_MAX)) }
     var temp by remember { mutableIntStateOf(FryerRecipes.snapTemp(draft.tempC)) }
 
@@ -317,7 +312,6 @@ private fun RecipeEditDialog(
                         FryerRecipe(
                             id = editing?.id ?: RecipeStore.newId(),
                             name = clean,
-                            mode = mode.trim(),
                             minutes = minutes,
                             tempC = temp,
                         ),
@@ -343,24 +337,6 @@ private fun RecipeEditDialog(
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth(),
             )
-            DomovTextField(
-                value = mode,
-                onValueChange = { mode = it.take(40) },
-                label = { Text("Režim fritézy (nepovinné)") },
-                singleLine = true,
-                supportingText = {
-                    Text(
-                        "Vstavaný program fritézy (napr. Chips, Cake). Nechaj prázdne, ak chceš len čas a teplotu – režim sa potom nezmení." +
-                            if (modes.isEmpty()) " Názov musí byť presne taký, ako ho fritéza hlási." else " Môžeš ťuknúť na režim, ktorý appka už videla.",
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (modes.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    modes.forEach { m -> DomovChip(m, selected = m == mode.trim()) { mode = m } }
-                }
-            }
             EditorSlider(
                 title = "Čas varenia",
                 valueText = "$minutes min",
@@ -378,7 +354,7 @@ private fun RecipeEditDialog(
                 onChange = { temp = FryerRecipes.snapTemp(it.roundToInt()) },
             )
             Text(
-                "Recept fritézu nikdy nespustí.",
+                "Recept nastaví len čas a teplotu. Fritézu nikdy nespustí.",
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
             )
