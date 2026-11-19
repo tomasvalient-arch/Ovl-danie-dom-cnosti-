@@ -7,24 +7,29 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -52,7 +57,6 @@ import java.time.LocalDate
 import kotlin.math.abs
 
 private val ItemHeight = 44.dp
-private const val VISIBLE_ITEMS = 5
 private const val WRAP_REPEATS = 200
 
 private val MONTH_NAMES = listOf(
@@ -69,7 +73,7 @@ private fun shortestDelta(from: Int, to: Int, count: Int): Int {
 }
 
 /**
- * Výber dátumu na bubnoch ako spodný panel: deň a mesiac sa zalamujú, rok nie (a nemusí byť vôbec – [withYear] = false pre
+ * Výber dátumu na bubnoch vo vyskakovacom okne uprostred obrazovky: deň a mesiac sa zalamujú, rok nie (a nemusí byť vôbec – [withYear] = false pre
  * meniny a každoročné udalosti). Po zastavení sa dátum opraví cez [DatePick.clamp], hodnoty mimo rozsahu sú zašedené.
  * [preview] vypíše pod bubnami, čo sa vybralo; „Hotovo“ vráti vybraný dátum.
  */
@@ -105,48 +109,47 @@ internal fun WheelDateDialog(
     }
 
     val chosen = DatePick.clamp(year, month, day, minDate, maxDate)
-    // panel siaha až na spodok obrazovky: odstup od systémovej navigácie (ak ju okno nehlási, pevná rezerva pre tlačidlá)
-    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val bottomPad = if (navBottom > 0.dp) navBottom + 16.dp else 64.dp
     val noClick = remember { MutableInteractionSource() }
     val outsideClick = remember { MutableInteractionSource() }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(
-            modifier = Modifier.fillMaxSize().clickable(interactionSource = outsideClick, indication = null, onClick = onDismiss),
-            contentAlignment = Alignment.BottomCenter,
+        // vyskakovacie okno uprostred obrazovky (mimo systémových líšt); ťuk mimo okna ho zavrie
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .clickable(interactionSource = outsideClick, indication = null, onClick = onDismiss)
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center,
         ) {
+            // na nízkej obrazovke (naležato) sú bubny len na tri riadky, aby sa okno zmestilo
+            val rows = if (maxHeight >= 520.dp) 5 else 3
+            val dayWeight = if (withYear) 0.24f else 0.4f
+            val monthWeight = if (withYear) 0.46f else 0.6f
             Surface(
-                modifier = Modifier.fillMaxWidth().clickable(interactionSource = noClick, indication = null, onClick = {}),
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-                color = scheme.surfaceContainerLow,
+                modifier = Modifier
+                    .widthIn(max = 380.dp)
+                    .fillMaxWidth()
+                    .clickable(interactionSource = noClick, indication = null, onClick = {}),
+                shape = RoundedCornerShape(28.dp),
+                color = scheme.surfaceContainerHigh,
+                tonalElevation = 6.dp,
             ) {
-                Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = bottomPad)) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .size(width = 36.dp, height = 4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(scheme.outlineVariant),
-                    )
-                    // Zrušiť a Hotovo sú hore, aby ich nikdy neprekryla systémová navigácia
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        TextButton(onClick = onDismiss) { Text("Zrušiť") }
-                        Spacer(Modifier.width(4.dp))
-                        Button(onClick = { onConfirm(chosen) }) { Text("Hotovo") }
-                    }
-                    val dayWeight = if (withYear) 0.24f else 0.4f
-                    val monthWeight = if (withYear) 0.46f else 0.6f
+                // keby sa okno aj tak nezmestilo (malý displej, veľké písmo), obsah sa dá posúvať
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = maxHeight)
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 12.dp),
+                ) {
+                    Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(14.dp))
                     Row(modifier = Modifier.fillMaxWidth()) {
                         WheelLabel("Deň", Modifier.weight(dayWeight))
                         WheelLabel("Mesiac", Modifier.weight(monthWeight))
                         if (withYear) WheelLabel("Rok", Modifier.weight(0.3f))
                     }
-                    Box(modifier = Modifier.fillMaxWidth().height(ItemHeight * VISIBLE_ITEMS)) {
+                    Box(modifier = Modifier.fillMaxWidth().height(ItemHeight * rows)) {
                         Box(
                             modifier = Modifier
                                 .align(Alignment.Center)
@@ -157,14 +160,14 @@ internal fun WheelDateDialog(
                         )
                         Row(modifier = Modifier.fillMaxSize()) {
                             Wheel(
-                                count = 31, selected = day - 1, wrap = true, sync = sync,
+                                count = 31, selected = day - 1, wrap = true, sync = sync, rows = rows,
                                 label = { (it + 1).toString() },
                                 valid = { DatePick.isValid(year, month, it + 1, minDate, maxDate) },
                                 onSettled = { settle(year, month, it + 1) },
                                 modifier = Modifier.weight(dayWeight),
                             )
                             Wheel(
-                                count = 12, selected = month - 1, wrap = true, sync = sync,
+                                count = 12, selected = month - 1, wrap = true, sync = sync, rows = rows,
                                 label = { MONTH_NAMES[it] },
                                 valid = { DatePick.monthHasValid(year, it + 1, minDate, maxDate) },
                                 onSettled = { settle(year, it + 1, day) },
@@ -172,7 +175,7 @@ internal fun WheelDateDialog(
                             )
                             if (withYear) {
                                 Wheel(
-                                    count = yearRange.last - yearRange.first + 1, selected = year - yearRange.first, wrap = false, sync = sync,
+                                    count = yearRange.last - yearRange.first + 1, selected = year - yearRange.first, wrap = false, sync = sync, rows = rows,
                                     label = { (yearRange.first + it).toString() },
                                     valid = { true },
                                     onSettled = { settle(yearRange.first + it, month, day) },
@@ -186,7 +189,7 @@ internal fun WheelDateDialog(
                         style = MaterialTheme.typography.bodyMedium,
                         color = scheme.primary,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                     )
                     if (hint != null) {
                         Text(
@@ -196,6 +199,15 @@ internal fun WheelDateDialog(
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = onDismiss) { Text("Zrušiť") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { onConfirm(chosen) }) { Text("Hotovo") }
                     }
                 }
             }
@@ -225,6 +237,7 @@ private fun Wheel(
     selected: Int,
     wrap: Boolean,
     sync: Int,
+    rows: Int,
     label: (Int) -> String,
     valid: (Int) -> Boolean,
     onSettled: (Int) -> Unit,
@@ -273,7 +286,7 @@ private fun Wheel(
     LazyColumn(
         state = state,
         flingBehavior = fling,
-        contentPadding = PaddingValues(vertical = ItemHeight * 2),
+        contentPadding = PaddingValues(vertical = ItemHeight * (rows / 2)),
         modifier = modifier.fillMaxHeight(),
     ) {
         items(total) { i ->
