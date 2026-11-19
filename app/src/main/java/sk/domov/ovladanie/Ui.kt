@@ -24,7 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -232,12 +232,13 @@ fun HomeScreen(vm: HomeViewModel) {
         )
     }
     pendingPower?.let { (device, warning, cmd) ->
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { pendingPower = null },
+            icon = { Icon(Sym.warning, null) },
             title = { Text("Zapnúť ${device.name}?") },
             text = { Text(warning) },
-            confirmButton = { TextButton(onClick = { pendingPower = null; vm.setValues(device, cmd) }) { Text("Zapnúť") } },
-            dismissButton = { TextButton(onClick = { pendingPower = null }) { Text("Zrušiť") } },
+            confirmButton = { DialogPrimaryButton(onClick = { pendingPower = null; vm.setValues(device, cmd) }) { Text("Zapnúť") } },
+            dismissButton = { DialogTextButton(onClick = { pendingPower = null }) { Text("Zrušiť") } },
         )
     }
     if (showScan) {
@@ -298,21 +299,22 @@ private fun FirstRunNameDialog() {
     var show by rememberSaveable { mutableStateOf(HouseholdStore.customName(context) == null && !HouseholdStore.nameAsked(context)) }
     if (!show) return
     var name by rememberSaveable { mutableStateOf("") }
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = {},
+        icon = { Icon(Sym.home, null) },
         title = { Text("Ako sa voláš?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Meno sa ukáže v upozornení po príchode domov (napr. „Vitaj doma, Tomáš“) a ostatným telefónom v domácnosti. " +
                     "Zmeníš ho v Automatika › Domácnosť.")
-                OutlinedTextField(name, { name = it }, label = { Text("Tvoje meno") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                DomovTextField(name, { name = it }, label = { Text("Tvoje meno") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
-            TextButton(enabled = name.isNotBlank(), onClick = { HouseholdStore.setName(context, name); show = false }) { Text("Uložiť") }
+            DialogPrimaryButton(enabled = name.isNotBlank(), onClick = { HouseholdStore.setName(context, name); show = false }) { Text("Uložiť") }
         },
         dismissButton = {
-            TextButton(onClick = { HouseholdStore.setNameAsked(context); show = false }) { Text("Neskôr") }
+            DialogTextButton(onClick = { HouseholdStore.setNameAsked(context); show = false }) { Text("Neskôr") }
         },
     )
 }
@@ -392,11 +394,12 @@ internal fun ValueDialog(
     onConfirm: (String) -> Unit,
 ) {
     var text by remember { mutableStateOf(initial) }
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.edit, null) },
         title = { Text(title) },
         text = {
-            OutlinedTextField(
+            DomovTextField(
                 value = text,
                 onValueChange = { text = it },
                 singleLine = true,
@@ -406,8 +409,8 @@ internal fun ValueDialog(
                 modifier = Modifier.fillMaxWidth(),
             )
         },
-        confirmButton = { TextButton(onClick = { onConfirm(text.trim()) }) { Text(confirmText) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
+        confirmButton = { DialogPrimaryButton(onClick = { onConfirm(text.trim()) }) { Text(confirmText) } },
+        dismissButton = { DialogTextButton(onClick = onDismiss) { Text("Zrušiť") } },
     )
 }
 
@@ -471,16 +474,15 @@ internal fun DeviceDialog(
     val boolDps = dpIds.filter { dp -> known?.get(dp) is Boolean || device?.schema?.get(dp)?.type == DpType.BOOLEAN }
     fun dpName(dp: String): String = device?.let { dpHumanName(it, known, dp) } ?: "Hodnota $dp"
 
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(if (isNew) Sym.add else Sym.settings, null) },
         title = { Text(if (isNew) "Nové zariadenie" else "Nastavenia zariadenia") },
         text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 hint?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                OutlinedTextField(
+                DomovTextField(
                     value = name, onValueChange = { name = it },
                     label = { Text("Názov") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     supportingText = { Text("Ako sa zariadenie volá v appke, napr. „LED pas kuchyňa“.") },
@@ -497,7 +499,7 @@ internal fun DeviceDialog(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
+                    DomovTextField(
                         value = newGroup, onValueChange = { newGroup = it }, singleLine = true,
                         label = { Text("Nová skupina") }, placeholder = { Text("napr. Kuchyňa") }, modifier = Modifier.weight(1f),
                     )
@@ -563,17 +565,17 @@ internal fun DeviceDialog(
                             }
                         }
                     }
-                    OutlinedTextField(
+                    DomovTextField(
                         value = ip, onValueChange = { ip = it },
                         label = { Text("IP adresa") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         supportingText = { Text("Adresa zariadenia v domácej WiFi, napr. 192.168.1.50. Keď sa zmení, appka ju väčšinou opraví sama.") },
                     )
-                    OutlinedTextField(
+                    DomovTextField(
                         value = devId, onValueChange = { devId = it },
                         label = { Text("Device ID") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         supportingText = { Text("Jedinečné označenie zariadenia v Tuya (z Tuya cloudu alebo hľadania v sieti).") },
                     )
-                    OutlinedTextField(
+                    DomovTextField(
                         value = key, onValueChange = { key = it },
                         label = { Text("Local key (16 znakov)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         isError = key.isNotBlank() && key.trim().length != 16,
@@ -600,22 +602,22 @@ internal fun DeviceDialog(
                             }
                         }
                     } else {
-                        OutlinedTextField(
+                        DomovTextField(
                             value = powerDp, onValueChange = { powerDp = it },
                             label = { Text("Číslo hodnoty (prázdne = automaticky)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    if (lightish || device == null) OutlinedTextField(
+                    if (lightish || device == null) DomovTextField(
                         value = whiteSw, onValueChange = { whiteSw = it },
                         label = { Text("Svetlo s 2 zdrojmi: vypínač bieleho svetla") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         supportingText = { Text("Číslo hodnoty" + (whiteSw.trim().takeIf { it.isNotEmpty() }?.let { " – ${dpName(it)}" } ?: "") + ". Len pre svetlá s hlavným a podhľadovým svetlom, inak nechaj prázdne.") },
                     )
-                    if (lightish || device == null) OutlinedTextField(
+                    if (lightish || device == null) DomovTextField(
                         value = colourSw, onValueChange = { colourSw = it },
                         label = { Text("Svetlo s 2 zdrojmi: vypínač farebného podhľadu") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         supportingText = { Text("Číslo hodnoty" + (colourSw.trim().takeIf { it.isNotEmpty() }?.let { " – ${dpName(it)}" } ?: "") + ". Inak nechaj prázdne.") },
                     )
-                    OutlinedTextField(
+                    DomovTextField(
                         value = labels, onValueChange = { labels = it },
                         label = { Text("Vlastné názvy hodnôt") }, modifier = Modifier.fillMaxWidth(),
                         supportingText = {
@@ -637,7 +639,7 @@ internal fun DeviceDialog(
                             }
                         }
                     } else {
-                        OutlinedTextField(
+                        DomovTextField(
                             value = hiddenText, onValueChange = { hiddenText = it; hidden = parseHidden(it) },
                             label = { Text("Čísla hodnôt, napr. 25, 26") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         )
@@ -646,7 +648,7 @@ internal fun DeviceDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            DialogPrimaryButton(
                 enabled = valid,
                 onClick = {
                     val base = device ?: Device(name = "", ip = "", devId = "", localKey = "")
@@ -682,9 +684,9 @@ internal fun DeviceDialog(
         dismissButton = {
             Row {
                 if (onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("Zmazať") }
+                    DialogTextButton(onClick = onDelete) { Text("Zmazať", color = MaterialTheme.colorScheme.error) }
                 }
-                TextButton(onClick = onDismiss) { Text("Zrušiť") }
+                DialogTextButton(onClick = onDismiss) { Text("Zrušiť") }
             }
         },
     )
@@ -742,11 +744,12 @@ private fun ImportDialog(onDismiss: () -> Unit, onImport: (List<Device>) -> Unit
         }
     }
 
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.download, null) },
         title = { Text("Import zariadení") },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Vlož JSON z exportu tejto appky alebo súbor devices.json, ktorý vytvorí „python -m tinytuya wizard“.",
                     style = MaterialTheme.typography.bodySmall,
@@ -767,7 +770,7 @@ private fun ImportDialog(onDismiss: () -> Unit, onImport: (List<Device>) -> Unit
                         error = if (pasted.isBlank()) "Schránka je prázdna" else null
                     },
                 ) { Text("Vložiť zo schránky") }
-                OutlinedTextField(
+                DomovTextField(
                     value = text,
                     onValueChange = { text = it; error = null },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 180.dp),
@@ -777,7 +780,7 @@ private fun ImportDialog(onDismiss: () -> Unit, onImport: (List<Device>) -> Unit
             }
         },
         confirmButton = {
-            TextButton(
+            DialogPrimaryButton(
                 onClick = {
                     try {
                         // kľúč domácnosti (z exportu iného telefónu alebo pozvánka) – automatika pre viac telefónov
@@ -796,7 +799,7 @@ private fun ImportDialog(onDismiss: () -> Unit, onImport: (List<Device>) -> Unit
                 },
             ) { Text("Importovať") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
+        dismissButton = { DialogTextButton(onClick = onDismiss) { Text("Zrušiť") } },
     )
 }
 
@@ -817,11 +820,12 @@ private fun ExportDialog(json: String, onDismiss: () -> Unit) {
         }
     }
 
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.upload, null) },
         title = { Text("Export zariadení") },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Obsahuje aj local keys a kľúč domácnosti, preto ho ulož na bezpečné miesto a pošli ho len členom domácnosti " +
                         "(napr. na druhý telefón). Po novej inštalácii alebo na druhom telefóne ho načítaš cez Import zariadení.",
@@ -831,7 +835,7 @@ private fun ExportDialog(json: String, onDismiss: () -> Unit) {
                     onClick = { saveFile.launch("domov-zariadenia.json") },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Uložiť do súboru .json") }
-                OutlinedTextField(
+                DomovTextField(
                     value = json,
                     onValueChange = {},
                     readOnly = true,
@@ -860,7 +864,7 @@ private fun ExportDialog(json: String, onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Zavrieť") } },
+        confirmButton = { DialogPrimaryButton(onClick = onDismiss) { Text("Zavrieť") } },
     )
 }
 
@@ -880,13 +884,12 @@ private fun ScanDialog(
 ) {
     val scan by vm.scan.collectAsState()
 
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.search, null) },
         title = { Text("Hľadať zariadenia v sieti") },
         text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (scan.running) {
                     Text("Počúvam v sieti (asi 12 sekúnd)…", style = MaterialTheme.typography.bodySmall)
@@ -916,9 +919,9 @@ private fun ScanDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Zavrieť") } },
+        confirmButton = { DialogPrimaryButton(onClick = onDismiss) { Text("Zavrieť") } },
         dismissButton = {
-            TextButton(onClick = { vm.startScan() }, enabled = !scan.running) { Text("Hľadať znova") }
+            DialogTextButton(onClick = { vm.startScan() }, enabled = !scan.running) { Text("Hľadať znova") }
         },
     )
 }
@@ -934,15 +937,8 @@ private fun FoundCard(
     cloudSet: Boolean = false,
 ) {
     val supported = found.version in SUPPORTED_VERSIONS
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (known != null) MaterialTheme.colorScheme.surfaceVariant
-            else MaterialTheme.colorScheme.primaryContainer,
-        ),
-    ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(known?.name ?: "Nové zariadenie", style = MaterialTheme.typography.titleSmall)
+    DialogCard(highlight = known == null) {
+            Text(known?.name ?: "Nové zariadenie", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
             Text(
                 "IP ${found.ip.ifBlank { "?" }} · verzia ${found.version.ifBlank { "?" }}",
                 style = MaterialTheme.typography.bodySmall,
@@ -984,6 +980,5 @@ private fun FoundCard(
                     )
                 }
             }
-        }
     }
 }

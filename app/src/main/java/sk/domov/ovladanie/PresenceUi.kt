@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -630,11 +631,12 @@ private fun InviteDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val invite = remember { HouseholdCrypto.invite(HouseholdStore.shareKey(context)) }
     val qr = remember(invite) { runCatching { qrBitmap(invite) }.getOrNull() }
-    androidx.compose.material3.AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.groups, null) },
         title = { Text("Pozvať do domácnosti") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.verticalScrollCompat()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Note("Pozvánka obsahuje kľúč domácnosti. Pošli ju len členom domácnosti. Na druhom telefóne: Domácnosť → " +
                     "Pridať sa do domácnosti → vlož pozvánku. QR kód naskenuj fotoaparátom druhého telefónu a text skopíruj.")
                 qr?.let {
@@ -650,19 +652,21 @@ private fun InviteDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
+            DialogPrimaryButton(onClick = {
+                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, invite)
+                context.startActivity(Intent.createChooser(send, "Poslať pozvánku"))
+            }) { Text("Zdieľať") }
+        },
+        dismissButton = {
             Row {
-                TextButton(onClick = {
+                DialogTextButton(onClick = onDismiss) { Text("Zavrieť") }
+                DialogTextButton(onClick = {
                     context.getSystemService(android.content.ClipboardManager::class.java)
                         ?.setPrimaryClip(android.content.ClipData.newPlainText("Domov – pozvánka", invite))
                     Toast.makeText(context, "Skopírované", Toast.LENGTH_SHORT).show()
                 }) { Text("Kopírovať") }
-                TextButton(onClick = {
-                    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, invite)
-                    context.startActivity(Intent.createChooser(send, "Poslať pozvánku"))
-                }) { Text("Zdieľať") }
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Zavrieť") } },
     )
 }
 

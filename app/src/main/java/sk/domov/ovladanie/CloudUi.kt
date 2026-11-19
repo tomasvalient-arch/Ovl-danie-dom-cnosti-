@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -188,19 +187,21 @@ fun CloudSettingsScreen(vm: HomeViewModel, onBack: () -> Unit, onGuide: () -> Un
     }
 
     if (confirmClear) {
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { confirmClear = false },
+            icon = { Icon(Sym.delete, null) },
+            danger = true,
             title = { Text("Odstrániť údaje Tuya cloudu?") },
             text = { Text("Zariadenia v appke zostanú a budú fungovať ďalej. Len sa už nebudú dať sťahovať z cloudu.") },
             confirmButton = {
-                TextButton(onClick = {
+                DialogPrimaryButton(onClick = {
                     confirmClear = false
                     vm.clearCloud()
                     accessId = ""
                     secret = ""
                 }) { Text("Odstrániť") }
             },
-            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Zrušiť") } },
+            dismissButton = { DialogTextButton(onClick = { confirmClear = false }) { Text("Zrušiť") } },
         )
     }
 }
@@ -380,11 +381,12 @@ fun HelpScreen(onBack: () -> Unit, onGuide: () -> Unit) {
 @Composable
 fun SyncDialog(vm: HomeViewModel, onDismiss: () -> Unit) {
     val sync by vm.sync.collectAsState()
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.sync, null) },
         title = { Text("Synchronizácia s Tuya cloudom") },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (sync.running) {
                     Text("Sťahujem zariadenia z Tuya cloudu a hľadám ich v sieti…", style = MaterialTheme.typography.bodySmall)
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -399,9 +401,8 @@ fun SyncDialog(vm: HomeViewModel, onDismiss: () -> Unit) {
                     if (sync.missing.isNotEmpty()) {
                         Text("V appke chýbajú:", style = MaterialTheme.typography.titleSmall)
                         sync.missing.forEach { c ->
-                            Card(modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(c.name, style = MaterialTheme.typography.titleSmall)
+                            DialogCard {
+                                    Text(c.name, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                                     val ip = vm.syncIp(c.id)
                                     Text(
                                         (c.productName.ifBlank { c.category }.let { if (it.isBlank()) "" else "$it · " }) +
@@ -409,7 +410,6 @@ fun SyncDialog(vm: HomeViewModel, onDismiss: () -> Unit) {
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                     Button(onClick = { vm.addFromSync(c) }) { Text("Pridať") }
-                                }
                             }
                         }
                         if (sync.missing.size > 1) {
@@ -428,15 +428,16 @@ fun SyncDialog(vm: HomeViewModel, onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Zavrieť") } },
+        confirmButton = { DialogPrimaryButton(onClick = onDismiss) { Text("Zavrieť") } },
     )
 }
 
 /** Pridanie nájdeného zariadenia bez nastaveného cloudu: návod alebo ručné zadanie local key. */
 @Composable
 fun NoCloudDialog(onGuide: () -> Unit, onManual: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.lock, null) },
         title = { Text("Chýba local key") },
         text = {
             Text(
@@ -444,7 +445,7 @@ fun NoCloudDialog(onGuide: () -> Unit, onManual: () -> Unit, onDismiss: () -> Un
                     "nastaviť Tuya cloud – potom ho appka dotiahne sama jedným ťuknutím."
             )
         },
-        confirmButton = { TextButton(onClick = onManual) { Text("Zadať ručne") } },
-        dismissButton = { TextButton(onClick = onGuide) { Text("Nastaviť Tuya cloud") } },
+        confirmButton = { DialogPrimaryButton(onClick = onManual) { Text("Zadať ručne") } },
+        dismissButton = { DialogTextButton(onClick = onGuide) { Text("Nastaviť Tuya cloud") } },
     )
 }

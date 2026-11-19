@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -491,6 +493,24 @@ internal fun CheckRow(
     verticalPadding: Dp = 0.dp,
     onChange: (Boolean) -> Unit,
 ) {
+    if (LocalInDomovDialog.current) {
+        // vo vyskakovacích oknách: názov vľavo, prepínač vpravo (celý riadok je ťuknuteľný)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+                .padding(vertical = verticalPadding + 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = titleStyle, color = MaterialTheme.colorScheme.onSurface)
+                if (!caption.isNullOrBlank()) Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(12.dp))
+            DomovSwitch(checked = checked, onCheckedChange = null, enabled = enabled)
+        }
+        return
+    }
     Row(
         modifier = Modifier.fillMaxWidth().clickable(enabled = enabled) { onChange(!checked) }.padding(vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,

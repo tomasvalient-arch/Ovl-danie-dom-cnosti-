@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
@@ -107,8 +107,9 @@ internal fun TechInfoDialog(device: Device, values: Map<String, Any>?, onDismiss
     }.getOrElse { "Technické info sa nepodarilo pripraviť: ${it.message}" }
     val monitoring = monitorJob?.isActive == true
 
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = { monitorJob?.cancel(); onDismiss() },
+        icon = { Icon(Sym.info, null) },
         title = { Text("Technické info") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -168,7 +169,7 @@ internal fun TechInfoDialog(device: Device, values: Map<String, Any>?, onDismiss
             }
         },
         confirmButton = {
-            TextButton(onClick = {
+            DialogPrimaryButton(onClick = {
                 runCatching {
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
@@ -181,14 +182,14 @@ internal fun TechInfoDialog(device: Device, values: Map<String, Any>?, onDismiss
         },
         dismissButton = {
             Row {
-                TextButton(onClick = {
+                DialogTextButton(onClick = {
                     runCatching {
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cm.setPrimaryClip(ClipData.newPlainText("Domov – popis zariadenia", text))
                         Toast.makeText(context, "Skopírované", Toast.LENGTH_SHORT).show()
                     }
                 }) { Text("Kopírovať") }
-                TextButton(onClick = { monitorJob?.cancel(); onDismiss() }) { Text("Zavrieť") }
+                DialogTextButton(onClick = { monitorJob?.cancel(); onDismiss() }) { Text("Zavrieť") }
             }
         },
     )
@@ -232,11 +233,12 @@ internal fun LightRolesDialog(
         else detectedText(device.copy(lightRoles = build()), values)
     }
 
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.lightbulb, null) },
         title = { Text("Kanály svetla") },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Ak svetlo má hlavné svetlo a podhľad, ale aplikácia ich neovláda samostatne, nastav to tu. Prázdne = automaticky.",
                     style = MaterialTheme.typography.bodySmall,
@@ -257,18 +259,15 @@ internal fun LightRolesDialog(
                     NumField(backBright, "Jas podhľadu (nepovinné)") { backBright = it }
                     NumField(backColour, "Farba podhľadu (nepovinné)") { backColour = it }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = arriveAll, onCheckedChange = { arriveAll = it })
-                    Text("Pri príchode zapnúť aj podhľad", style = MaterialTheme.typography.bodyMedium)
-                }
+                CheckRow("Pri príchode zapnúť aj podhľad", checked = arriveAll, titleStyle = MaterialTheme.typography.bodyMedium) { arriveAll = it }
                 Text("Rozpoznané: $preview", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
         },
-        confirmButton = { TextButton(onClick = { onApply(build()) }) { Text("Použiť") } },
+        confirmButton = { DialogPrimaryButton(onClick = { onApply(build()) }) { Text("Použiť") } },
         dismissButton = {
             Row {
-                TextButton(onClick = { onApply(emptyMap()) }) { Text("Automaticky") }
-                TextButton(onClick = onDismiss) { Text("Zrušiť") }
+                DialogTextButton(onClick = { onApply(emptyMap()) }) { Text("Automaticky") }
+                DialogTextButton(onClick = onDismiss) { Text("Zrušiť") }
             }
         },
     )
@@ -276,7 +275,7 @@ internal fun LightRolesDialog(
 
 @Composable
 private fun NumField(value: String, label: String, onChange: (String) -> Unit) {
-    OutlinedTextField(
+    DomovTextField(
         value = value,
         onValueChange = { onChange(it.filter { c -> c.isDigit() }.take(4)) },
         label = { Text(label) },

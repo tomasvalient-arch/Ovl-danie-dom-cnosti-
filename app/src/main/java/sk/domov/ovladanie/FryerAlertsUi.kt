@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -113,8 +113,9 @@ fun FryerAlertsCard(device: Device) {
     }
 
     if (explain) {
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { explain = false; FryerStore.setPermissionAsked(context) },
+            icon = { Icon(Sym.timer, null) },
             title = { Text("Upozornenia fritézy") },
             text = {
                 Text(
@@ -123,13 +124,13 @@ fun FryerAlertsCard(device: Device) {
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                DialogPrimaryButton(onClick = {
                     explain = false
                     FryerStore.setPermissionAsked(context)
                     if (Build.VERSION.SDK_INT >= 33) launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }) { Text("Povoliť") }
             },
-            dismissButton = { TextButton(onClick = { explain = false; FryerStore.setPermissionAsked(context) }) { Text("Teraz nie") } },
+            dismissButton = { DialogTextButton(onClick = { explain = false; FryerStore.setPermissionAsked(context) }) { Text("Teraz nie") } },
         )
     }
 }

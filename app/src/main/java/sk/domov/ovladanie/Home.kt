@@ -37,7 +37,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -297,7 +296,7 @@ internal fun HomeMain(
     if (confirmAllOff) {
         val plan = Scenes.allOffIds(cfg, devices, ::values)
         val names = devices.filter { it.id in plan }.map { it.name }
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { confirmAllOff = false },
             icon = { Icon(Sym.powerSettingsNew, null) },
             title = { Text("Všetko vypnúť?") },
@@ -309,15 +308,15 @@ internal fun HomeMain(
                         if (!wifiOn) "\n\nNie si na WiFi – pôjde to cez Tuya cloud (ak je nastavený)." else "",
                 )
             },
-            confirmButton = { TextButton(onClick = { confirmAllOff = false; vm.allOff() }, enabled = names.isNotEmpty()) { Text("Vypnúť") } },
-            dismissButton = { TextButton(onClick = { confirmAllOff = false; onPage("presence") }) { Text("Zmeniť výber") } },
+            confirmButton = { DialogPrimaryButton(onClick = { confirmAllOff = false; vm.allOff() }, enabled = names.isNotEmpty()) { Text("Vypnúť") } },
+            dismissButton = { DialogTextButton(onClick = { confirmAllOff = false; onPage("presence") }) { Text("Zmeniť výber") } },
         )
     }
     if (confirmNight) {
         val scene by vm.night.collectAsState()
         val dim = devices.filter { it.id in scene.dimIds }.map { it.name }
         val off = Scenes.nightOffIds(scene, devices, ::values).let { ids -> devices.filter { it.id in ids }.map { it.name } }
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { confirmNight = false },
             icon = { Icon(Sym.bedtime, null) },
             title = { Text("Scéna Noc") },
@@ -331,8 +330,8 @@ internal fun HomeMain(
                     },
                 )
             },
-            confirmButton = { TextButton(onClick = { confirmNight = false; vm.runNight() }, enabled = wifiOn) { Text("Spustiť") } },
-            dismissButton = { TextButton(onClick = { confirmNight = false; onPage("night") }) { Text("Upraviť") } },
+            confirmButton = { DialogPrimaryButton(onClick = { confirmNight = false; vm.runNight() }, enabled = wifiOn) { Text("Spustiť") } },
+            dismissButton = { DialogTextButton(onClick = { confirmNight = false; onPage("night") }) { Text("Upraviť") } },
         )
     }
     moving?.let { d ->
@@ -638,11 +637,12 @@ private fun MoveDialog(
     onDismiss: () -> Unit,
 ) {
     var newName by remember { mutableStateOf("") }
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.tune, null) },
         title = { Text(device.name) },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Poradie v skupine", style = MaterialTheme.typography.titleSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     androidx.compose.material3.OutlinedButton(onClick = { onMove(-1) }) {
@@ -657,7 +657,7 @@ private fun MoveDialog(
                 GroupOption("$auto (automaticky)", selected = device.group.isBlank()) { onGroup("") }
                 custom.forEach { g -> GroupOption(g, selected = current == g) { onGroup(g) } }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
+                    DomovTextField(
                         value = newName,
                         onValueChange = { newName = it.take(30) },
                         label = { Text("Nová skupina, napr. Obývačka") },
@@ -675,16 +675,13 @@ private fun MoveDialog(
                 )
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Hotovo") } },
+        confirmButton = { DialogPrimaryButton(onClick = onDismiss) { Text("Hotovo") } },
     )
 }
 
 @Composable
 private fun GroupOption(title: String, selected: Boolean, onClick: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected = selected, onClick = onClick)
-        Text(title)
-    }
+    DialogOption(title = title, selected = selected, onClick = onClick)
 }
 
 /** Prázdny zoznam (aj prvé spustenie): ponúkne všetky spôsoby pridania zariadení, cloud je len jeden z nich. */

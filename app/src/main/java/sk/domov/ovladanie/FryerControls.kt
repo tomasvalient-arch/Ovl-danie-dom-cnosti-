@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -139,8 +139,9 @@ fun FryerControls(
     }
 
     if (confirmStart) {
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { confirmStart = false },
+            icon = { Icon(Sym.skillet, null) },
             title = { Text("Spustiť varenie?") },
             text = {
                 Text(
@@ -149,9 +150,9 @@ fun FryerControls(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { confirmStart = false; onCommand(Fryer.start(spec, true)) }) { Text("Spustiť") }
+                DialogPrimaryButton(onClick = { confirmStart = false; onCommand(Fryer.start(spec, true)) }) { Text("Spustiť") }
             },
-            dismissButton = { TextButton(onClick = { confirmStart = false }) { Text("Zrušiť") } },
+            dismissButton = { DialogTextButton(onClick = { confirmStart = false }) { Text("Zrušiť") } },
         )
     }
     if (customMode) {

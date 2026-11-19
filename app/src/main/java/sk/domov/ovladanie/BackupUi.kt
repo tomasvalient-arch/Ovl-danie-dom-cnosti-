@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -277,39 +276,37 @@ fun BackupScreen(onBack: () -> Unit) {
     }
 
     busy?.let { label ->
-        AlertDialog(
-            onDismissRequest = {},
-            confirmButton = {},
-            text = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    CircularProgressIndicator()
-                    Text(label)
-                }
-            },
-        )
+        DomovDialog(onDismiss = {}, title = null) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                CircularProgressIndicator()
+                Text(label)
+            }
+        }
     }
 
     message?.let { (title, text) ->
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { message = null },
+            icon = { Icon(Sym.info, null) },
             title = { Text(title) },
-            text = { Column(Modifier.verticalScroll(rememberScrollState())) { Text(text) } },
-            confirmButton = { TextButton(onClick = { message = null }) { Text("OK") } },
+            text = { Column() { Text(text) } },
+            confirmButton = { DialogPrimaryButton(onClick = { message = null }) { Text("OK") } },
         )
     }
 
     if (askPassword && busy == null) {
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { askPassword = false; fileData = null },
+            icon = { Icon(Sym.lock, null) },
             title = { Text("Heslo zálohy") },
             text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     PasswordField("Heslo", restorePw) { restorePw = it; restoreError = null }
                     restoreError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 }
             },
             confirmButton = {
-                TextButton(enabled = restorePw.isNotEmpty(), onClick = {
+                DialogPrimaryButton(enabled = restorePw.isNotEmpty(), onClick = {
                     val data = fileData ?: return@TextButton
                     work("Overujem heslo…") {
                         val r = withContext(Dispatchers.IO) { runCatching { BackupPayload.open(data, restorePw.toCharArray()) } }
@@ -327,18 +324,19 @@ fun BackupScreen(onBack: () -> Unit) {
                     }
                 }) { Text("Otvoriť") }
             },
-            dismissButton = { TextButton(onClick = { askPassword = false; fileData = null }) { Text("Zrušiť") } },
+            dismissButton = { DialogTextButton(onClick = { askPassword = false; fileData = null }) { Text("Zrušiť") } },
         )
     }
 
     preview?.let { p ->
         if (conflicts == null && busy == null) {
             val s = remember(p) { Backup.summary(p) }
-            AlertDialog(
+            DomovAlert(
                 onDismissRequest = { preview = null },
+                icon = { Icon(Sym.refresh, null) },
                 title = { Text("Obnoviť zálohu?") },
                 text = {
-                    Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
                             "Vytvorená ${dateText(s.created)}" + if (s.appVersion.isNotBlank()) " vo verzii ${s.appVersion}" else "",
                             style = MaterialTheme.typography.bodySmall,
@@ -355,7 +353,7 @@ fun BackupScreen(onBack: () -> Unit) {
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = {
+                    DialogPrimaryButton(onClick = {
                         if (mode == RestoreMode.MERGE) {
                             val c = runCatching {
                                 val cur = BackupManager.applier(context).snapshot(includeSecrets = false)
@@ -367,15 +365,16 @@ fun BackupScreen(onBack: () -> Unit) {
                         }
                     }) { Text("Obnoviť") }
                 },
-                dismissButton = { TextButton(onClick = { preview = null }) { Text("Zrušiť") } },
+                dismissButton = { DialogTextButton(onClick = { preview = null }) { Text("Zrušiť") } },
             )
         }
     }
 
     conflicts?.let { list ->
         if (busy == null) {
-            AlertDialog(
+            DomovAlert(
                 onDismissRequest = { conflicts = null },
+                icon = { Icon(Sym.warning, null) },
                 title = { Text("Rozdielne zariadenia") },
                 text = {
                     Column(modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -385,29 +384,29 @@ fun BackupScreen(onBack: () -> Unit) {
                         )
                         list.forEach { c ->
                             val on = useBackup[c.backupId] == true
-                            Row(modifier = Modifier.fillMaxWidth().clickable { useBackup[c.backupId] = !on }, verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = on, onCheckedChange = { useBackup[c.backupId] = it })
-                                Column {
-                                    Text(c.currentName + if (c.name != c.currentName) " (v zálohe „${c.name}“)" else "", style = MaterialTheme.typography.bodyMedium)
-                                    Text("Iné: " + c.differences.joinToString(", "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
+                            CheckRow(
+                                title = c.currentName + if (c.name != c.currentName) " (v zálohe „${c.name}“)" else "",
+                                caption = "Iné: " + c.differences.joinToString(", "),
+                                checked = on,
+                                titleStyle = MaterialTheme.typography.bodyMedium,
+                            ) { useBackup[c.backupId] = it }
                         }
                     }
                 },
-                confirmButton = { TextButton(onClick = { doRestore() }) { Text("Zlúčiť") } },
-                dismissButton = { TextButton(onClick = { conflicts = null }) { Text("Späť") } },
+                confirmButton = { DialogPrimaryButton(onClick = { doRestore() }) { Text("Zlúčiť") } },
+                dismissButton = { DialogTextButton(onClick = { conflicts = null }) { Text("Späť") } },
             )
         }
     }
 
     if (confirmUndo) {
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { confirmUndo = false },
+            icon = { Icon(Sym.arrowBack, null) },
             title = { Text("Vrátiť späť?") },
-            text = { Column(Modifier.verticalScroll(rememberScrollState())) { Text("Nastavenia sa vrátia do stavu pred posledným obnovením zo zálohy (${dateText(safetyAt)}). Appka sa potom reštartuje.") } },
+            text = { Column() { Text("Nastavenia sa vrátia do stavu pred posledným obnovením zo zálohy (${dateText(safetyAt)}). Appka sa potom reštartuje.") } },
             confirmButton = {
-                TextButton(onClick = {
+                DialogPrimaryButton(onClick = {
                     confirmUndo = false
                     work("Vraciam späť…") {
                         val r = withContext(Dispatchers.IO) { runCatching { BackupManager.undo(context) } }
@@ -416,16 +415,17 @@ fun BackupScreen(onBack: () -> Unit) {
                     }
                 }) { Text("Vrátiť späť") }
             },
-            dismissButton = { TextButton(onClick = { confirmUndo = false }) { Text("Zrušiť") } },
+            dismissButton = { DialogTextButton(onClick = { confirmUndo = false }) { Text("Zrušiť") } },
         )
     }
 
     if (autoSetup) {
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { autoSetup = false },
+            icon = { Icon(Sym.schedule, null) },
             title = { Text("Automatická záloha") },
             text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Raz týždenne uloží zálohu do vybraného priečinka (napr. Stiahnuté alebo Google Disk) a nechá posledné 4.", style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick = { pickFolder.launch(null) }, modifier = Modifier.fillMaxWidth()) {
                         Text(autoFolder?.let { "Priečinok: " + folderName(it) } ?: "Vybrať priečinok")
@@ -439,7 +439,7 @@ fun BackupScreen(onBack: () -> Unit) {
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                DialogPrimaryButton(onClick = {
                     val folder = autoFolder
                     autoError = if (folder == null) "Vyber priečinok." else passwordProblem(autoPw1, autoPw2)
                     if (autoError == null && folder != null) {
@@ -452,7 +452,7 @@ fun BackupScreen(onBack: () -> Unit) {
                     }
                 }) { Text("Zapnúť") }
             },
-            dismissButton = { TextButton(onClick = { autoSetup = false }) { Text("Zrušiť") } },
+            dismissButton = { DialogTextButton(onClick = { autoSetup = false }) { Text("Zrušiť") } },
         )
     }
 }
@@ -469,6 +469,18 @@ private fun folderName(uri: Uri): String = runCatching {
 
 @Composable
 private fun PasswordField(label: String, value: String, onChange: (String) -> Unit) {
+    if (LocalInDomovDialog.current) {
+        DomovTextField(
+            value = value,
+            onValueChange = onChange,
+            label = { Text(label) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        return
+    }
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
@@ -482,11 +494,5 @@ private fun PasswordField(label: String, value: String, onChange: (String) -> Un
 
 @Composable
 private fun ModeRow(title: String, caption: String, selected: Boolean, onClick: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected = selected, onClick = onClick)
-        Column {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
+    DialogOption(title = title, caption = caption, selected = selected, onClick = onClick)
 }

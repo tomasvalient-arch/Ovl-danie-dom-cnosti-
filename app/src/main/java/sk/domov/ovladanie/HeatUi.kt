@@ -18,7 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
@@ -202,13 +201,13 @@ internal fun HeatScreen(vm: HomeViewModel, zoneId: String?, onBack: (() -> Unit)
         }
     }
     if (confirmOff) {
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { confirmOff = false },
             icon = { Icon(Sym.powerSettingsNew, null) },
             title = { Text("Vypnúť kúrenie?") },
             text = { Text("Celý systém evohome prestane kúriť (ochrana proti zamrznutiu ostáva). Zapneš ho späť režimom Auto.") },
-            confirmButton = { TextButton(onClick = { confirmOff = false; vm.heat.setMode(EvoMode.OFF) }) { Text("Vypnúť") } },
-            dismissButton = { TextButton(onClick = { confirmOff = false }) { Text("Zrušiť") } },
+            confirmButton = { DialogPrimaryButton(onClick = { confirmOff = false; vm.heat.setMode(EvoMode.OFF) }) { Text("Vypnúť") } },
+            dismissButton = { DialogTextButton(onClick = { confirmOff = false }) { Text("Zrušiť") } },
         )
     }
 }
@@ -337,12 +336,14 @@ internal fun HeatLoginScreen(vm: HomeViewModel, onBack: () -> Unit, onDone: () -
         )
     }
     if (confirmLogout) {
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { confirmLogout = false },
+            icon = { Icon(Sym.lock, null) },
+            danger = true,
             title = { Text("Odhlásiť Honeywell?") },
             text = { Text("Zmaže sa uložený e-mail, heslo a stav kúrenia z tohto telefónu. Kúrenie samotné sa nezmení.") },
-            confirmButton = { TextButton(onClick = { confirmLogout = false; vm.heat.logout(); onBack() }) { Text("Odhlásiť") } },
-            dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("Zrušiť") } },
+            confirmButton = { DialogPrimaryButton(onClick = { confirmLogout = false; vm.heat.logout(); onBack() }) { Text("Odhlásiť") } },
+            dismissButton = { DialogTextButton(onClick = { confirmLogout = false }) { Text("Zrušiť") } },
         )
     }
 }

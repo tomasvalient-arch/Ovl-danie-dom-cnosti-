@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -312,5 +314,75 @@ private fun Wheel(
                 Text(label(v), style = MaterialTheme.typography.titleLarge, maxLines = 1)
             }
         }
+    }
+}
+
+/**
+ * Výber času na bubnoch (hodina a minúta) v rovnakom okne ako ostatné okná appky. „Hotovo“ vráti minúty od polnoci,
+ * [preview] vypíše pod bubnami, čo sa vybralo.
+ */
+@Composable
+internal fun WheelTimeDialog(
+    title: String,
+    initialMinutes: Int,
+    preview: (Int) -> String,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    var hour by remember { mutableIntStateOf((initialMinutes / 60).coerceIn(0, 23)) }
+    var minute by remember { mutableIntStateOf((initialMinutes % 60).coerceIn(0, 59)) }
+    // na nízkej obrazovke (naležato) sú bubny len na tri riadky, aby sa okno zmestilo
+    val rows = if (LocalConfiguration.current.screenHeightDp >= 560) 5 else 3
+    val colonWidth = 16.dp
+
+    DomovDialog(
+        onDismiss = onDismiss,
+        title = { Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        icon = { Icon(Sym.schedule, null) },
+        confirmButton = { DialogPrimaryButton(onClick = { onConfirm(hour * 60 + minute) }) { Text("Hotovo") } },
+        dismissButton = { DialogTextButton(onClick = onDismiss) { Text("Zrušiť") } },
+    ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            WheelLabel("Hodina", Modifier.weight(1f))
+            Spacer(Modifier.width(colonWidth))
+            WheelLabel("Minúta", Modifier.weight(1f))
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(ItemHeight * rows)) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .height(ItemHeight)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(scheme.surfaceVariant.copy(alpha = 0.6f)),
+            )
+            Row(modifier = Modifier.fillMaxSize()) {
+                Wheel(
+                    count = 24, selected = hour, wrap = true, sync = 0, rows = rows,
+                    label = { "%02d".format(it) },
+                    valid = { true },
+                    onSettled = { hour = it },
+                    modifier = Modifier.weight(1f),
+                )
+                Box(modifier = Modifier.width(colonWidth).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    Text(":", style = MaterialTheme.typography.titleLarge, color = scheme.onSurface)
+                }
+                Wheel(
+                    count = 60, selected = minute, wrap = true, sync = 0, rows = rows,
+                    label = { "%02d".format(it) },
+                    valid = { true },
+                    onSettled = { minute = it },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        Text(
+            preview(hour * 60 + minute),
+            style = MaterialTheme.typography.bodyMedium,
+            color = scheme.primary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+        )
     }
 }

@@ -3,7 +3,6 @@
 package sk.domov.ovladanie
 
 import android.Manifest
-import android.app.TimePickerDialog
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -29,7 +28,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -166,6 +164,7 @@ internal fun EventsScreen(onBack: () -> Unit) {
     var timeMin by remember { mutableIntStateOf(EventsStore.time(context)) }
     var editing by remember { mutableStateOf<EventItem?>(null) }
     var adding by remember { mutableStateOf(false) }
+    var pickTime by remember { mutableStateOf(false) }
     var allowed by remember { mutableStateOf(notificationsOn(context)) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed = notificationsOn(context) }
     val today = LocalDate.now()
@@ -243,22 +242,26 @@ internal fun EventsScreen(onBack: () -> Unit) {
                     Sym.schedule, "Čas upozornení",
                     caption = "Kedy ráno ti upozornenie príde",
                     value = clockText(timeMin),
-                    onClick = {
-                        TimePickerDialog(
-                            context,
-                            { _, h, m ->
-                                timeMin = h * 60 + m
-                                EventsStore.setTime(context, h * 60 + m)
-                            },
-                            timeMin / 60, timeMin % 60, true,
-                        ).show()
-                    },
+                    onClick = { pickTime = true },
                 )
             }
             Spacer(Modifier.height(24.dp))
         }
     }
 
+    if (pickTime) {
+        WheelTimeDialog(
+            title = "Čas upozornení",
+            initialMinutes = timeMin,
+            preview = { m -> "Upozornenie príde ráno o %d:%02d".format(m / 60, m % 60) },
+            onConfirm = { m ->
+                timeMin = m
+                EventsStore.setTime(context, m)
+                pickTime = false
+            },
+            onDismiss = { pickTime = false },
+        )
+    }
     if (adding) {
         EventDialog(initial = null, onSave = { saved(it) }, onDelete = null, onDismiss = { adding = false })
     }
@@ -355,6 +358,7 @@ private fun EventListRow(e: EventItem, today: LocalDate, mode: Int, onClick: () 
  * Meniny ([meninyOn]) sú druhý dátum tej istej osoby s rovnakými upozorneniami; ak je meno v kalendári mien na jednom dni,
  * dátum sa predvyplní, inak sa otvoria bubny. Pod dátumami je vidno, čo sa naozaj stane (ktoré upozornenia prídu a ktoré už prešli).
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDelete: (() -> Unit)?, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -452,16 +456,17 @@ private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDele
     }
     val canSave = name.isNotBlank() && !needsBirthYear && !needsMeninyDate && !pastOneTime
 
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.calendarToday, null) },
         title = { Text(if (initial == null) "Nová udalosť" else "Upraviť udalosť") },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ChipRow {
-                    DomovChip("Udalosť", selected = !birthday) { birthday = false }
-                    DomovChip("Narodeniny", selected = birthday) { birthday = true }
-                }
-                OutlinedTextField(
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Segmented(
+                    listOf<Pair<String, androidx.compose.ui.graphics.vector.ImageVector?>>("Udalosť" to null, "Narodeniny" to null),
+                    if (birthday) 1 else 0,
+                ) { birthday = it == 1 }
+                DomovTextField(
                     value = name,
                     onValueChange = { name = it.take(Events.MAX_NAME) },
                     label = { Text(if (birthday) "Meno" else "Názov") },
@@ -474,15 +479,14 @@ private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDele
                 } else {
                     CheckRow(title = "Opakovať každý rok", checked = yearly) { yearly = it }
                 }
-                SettingRow(Sym.calendarToday, dateTitle, value = dateValue, onClick = { picking = 1 })
+                DialogPickRow(Sym.calendarToday, dateTitle, dateValue) { picking = 1 }
                 if (birthday) {
                     CheckRow(title = "Pridať aj meniny", caption = "Upozornenie príde aj v deň menín", checked = meninyOn) { toggleMeniny(it) }
                     if (meninyOn && meninyMonth > 0) {
-                        SettingRow(
+                        DialogPickRow(
                             Sym.calendarToday, "Meniny",
-                            value = Events.dateText(Events.safeDate(DatePick.LEAP_YEAR, meninyMonth, meninyDay)),
-                            onClick = { picking = 2 },
-                        )
+                            Events.dateText(Events.safeDate(DatePick.LEAP_YEAR, meninyMonth, meninyDay)),
+                        ) { picking = 2 }
                     }
                 }
                 when {
@@ -497,14 +501,17 @@ private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDele
                     }
                 }
                 Text("Upozorniť vopred", style = MaterialTheme.typography.titleSmall)
-                ChipRow {
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Events.PRESETS.forEach { off ->
                         DomovChip(Events.offsetLabel(off), selected = off in offsets) {
                             offsets = if (off in offsets) offsets - off else offsets + off
                         }
                     }
                 }
-                OutlinedTextField(
+                DomovTextField(
                     value = custom,
                     onValueChange = { custom = it.filter { ch -> ch.isDigit() }.take(3) },
                     label = { Text("Iný počet dní vopred (nepovinné)") },
@@ -524,8 +531,8 @@ private fun EventDialog(initial: EventItem?, onSave: (EventItem) -> Unit, onDele
                 }
             }
         },
-        confirmButton = { TextButton(enabled = canSave, onClick = { onSave(build()) }) { Text("Uložiť") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
+        confirmButton = { DialogPrimaryButton(enabled = canSave, onClick = { onSave(build()) }) { Text("Uložiť") } },
+        dismissButton = { DialogTextButton(onClick = onDismiss) { Text("Zrušiť") } },
     )
 
     if (picking == 1) {

@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.OutlinedTextField
@@ -180,12 +179,13 @@ fun DeviceScreen(
         )
     }
     pendingTop?.let { (warning, cmd) ->
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { pendingTop = null },
+            icon = { Icon(Sym.warning, null) },
             title = { Text("Naozaj zapnúť?") },
             text = { Text(warning) },
-            confirmButton = { TextButton(onClick = { pendingTop = null; vm.setValues(device, cmd) }) { Text("Zapnúť") } },
-            dismissButton = { TextButton(onClick = { pendingTop = null }) { Text("Zrušiť") } },
+            confirmButton = { DialogPrimaryButton(onClick = { pendingTop = null; vm.setValues(device, cmd) }) { Text("Zapnúť") } },
+            dismissButton = { DialogTextButton(onClick = { pendingTop = null }) { Text("Zrušiť") } },
         )
     }
 }
@@ -513,14 +513,15 @@ private fun DeviceContentInner(device: Device, values: Map<String, Any>, wifiOn:
     }
 
     pending?.let { (warning, cmd) ->
-        AlertDialog(
+        DomovAlert(
             onDismissRequest = { pending = null },
+            icon = { Icon(Sym.warning, null) },
             title = { Text("Naozaj zapnúť?") },
             text = { Text(warning) },
             confirmButton = {
-                TextButton(onClick = { pending = null; vm.setValues(device, cmd) }) { Text("Zapnúť") }
+                DialogPrimaryButton(onClick = { pending = null; vm.setValues(device, cmd) }) { Text("Zapnúť") }
             },
-            dismissButton = { TextButton(onClick = { pending = null }) { Text("Zrušiť") } },
+            dismissButton = { DialogTextButton(onClick = { pending = null }) { Text("Zrušiť") } },
         )
     }
 }
@@ -657,32 +658,20 @@ private fun DpRow(
             IconButton(onClick = { menu = true }) {
                 Icon(Sym.moreVert, contentDescription = "Viac")
             }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(
-                    text = { Text("Premenovať") },
-                    onClick = { menu = false; renaming = true },
-                )
-                DropdownMenuItem(
-                    text = { Text("Skryť") },
-                    onClick = { menu = false; onHide() },
-                )
+            DomovMenu(expanded = menu, onDismiss = { menu = false }) {
+                DomovMenuItem("Premenovať", Sym.edit, onClick = { menu = false; renaming = true })
+                DomovMenuItem("Skryť", Sym.close, onClick = { menu = false; onHide() })
+                if (onMakePower != null || onMakeWhiteSwitch != null || onMakeColourSwitch != null) {
+                    DomovMenuLabel("Použiť ako")
+                }
                 if (onMakePower != null) {
-                    DropdownMenuItem(
-                        text = { Text("Nastaviť ako hlavný vypínač") },
-                        onClick = { menu = false; onMakePower() },
-                    )
+                    DomovMenuItem("Hlavný vypínač", Sym.bolt, onClick = { menu = false; onMakePower() })
                 }
                 if (onMakeWhiteSwitch != null) {
-                    DropdownMenuItem(
-                        text = { Text("Vypínač hlavného svetla (biela)") },
-                        onClick = { menu = false; onMakeWhiteSwitch() },
-                    )
+                    DomovMenuItem("Vypínač hlavného svetla (biela)", Sym.lightbulb, onClick = { menu = false; onMakeWhiteSwitch() })
                 }
                 if (onMakeColourSwitch != null) {
-                    DropdownMenuItem(
-                        text = { Text("Vypínač podhľadového svetla (farba)") },
-                        onClick = { menu = false; onMakeColourSwitch() },
-                    )
+                    DomovMenuItem("Vypínač podhľadového svetla (farba)", Sym.palette, onClick = { menu = false; onMakeColourSwitch() })
                 }
             }
         }
@@ -746,12 +735,21 @@ private fun NumberDialog(title: String, schema: DpSchema, raw: Long, onDismiss: 
     fun clamp(v: Long): Long = Schema.toRaw(schema, Schema.scaled(v, schema.scale))
     val count = if (min != null && max != null && max > min) (max - min) / schema.step else 0L
 
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.tune, null) },
         title = { Text(title) },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(Schema.format(schema, current), style = MaterialTheme.typography.headlineSmall)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    Schema.format(schema, current),
+                    style = MaterialTheme.typography.displaySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 if (min != null && max != null) {
                     Text(
                         "Rozsah ${Schema.format(schema, min)} – ${Schema.format(schema, max)}",
@@ -759,18 +757,29 @@ private fun NumberDialog(title: String, schema: DpSchema, raw: Long, onDismiss: 
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalIconButton(onClick = { current = clamp(current - schema.step); typed = null }) { Text("−") }
+                Spacer(Modifier.size(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    FilledTonalIconButton(onClick = { current = clamp(current - schema.step); typed = null }, modifier = Modifier.size(48.dp)) {
+                        Icon(Sym.remove, contentDescription = "Menej")
+                    }
                     if (count in 1..1000) {
-                        Slider(
+                        WideSlider(
                             value = current.coerceIn(min!!, max!!).toFloat(),
-                            onValueChange = { current = clamp(it.toLong()); typed = null },
-                            valueRange = min.toFloat()..max.toFloat(),
-                            steps = if (count in 2..200) (count - 1).toInt() else 0,
+                            range = min.toFloat()..max.toFloat(),
+                            enabled = true,
+                            track = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.surfaceVariant),
                             modifier = Modifier.weight(1f),
+                            fill = amberFill(),
+                            steps = if (count in 2..200) (count - 1).toInt() else 0,
+                            onChange = { current = clamp(it.toLong()); typed = null },
+                            onFinished = {},
                         )
                     } else {
-                        OutlinedTextField(
+                        DomovTextField(
                             value = typed ?: Schema.formatNumber(Schema.scaled(current, schema.scale), schema.scale),
                             onValueChange = { input ->
                                 typed = input
@@ -780,12 +789,14 @@ private fun NumberDialog(title: String, schema: DpSchema, raw: Long, onDismiss: 
                             modifier = Modifier.weight(1f),
                         )
                     }
-                    FilledTonalIconButton(onClick = { current = clamp(current + schema.step); typed = null }) { Text("+") }
+                    FilledTonalIconButton(onClick = { current = clamp(current + schema.step); typed = null }, modifier = Modifier.size(48.dp)) {
+                        Icon(Sym.add, contentDescription = "Viac")
+                    }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(current) }) { Text("Nastaviť") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
+        confirmButton = { DialogPrimaryButton(onClick = { onConfirm(current) }) { Text("Nastaviť") } },
+        dismissButton = { DialogTextButton(onClick = onDismiss) { Text("Zrušiť") } },
     )
 }
 
@@ -793,24 +804,24 @@ private fun NumberDialog(title: String, schema: DpSchema, raw: Long, onDismiss: 
 @Composable
 private fun EnumDialog(title: String, schema: DpSchema, current: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var selected by remember { mutableStateOf(current) }
-    AlertDialog(
+    DomovAlert(
         onDismissRequest = onDismiss,
+        icon = { Icon(Sym.tune, null) },
         title = { Text(title) },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 schema.range.forEach { option ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { selected = option },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = selected == option, onClick = { selected = option })
-                        val label = Schema.enumLabel(schema.code, option)
-                        Text(if (label == option) option else "$label ($option)")
-                    }
+                    val label = Schema.enumLabel(schema.code, option)
+                    DialogOption(
+                        title = label,
+                        trailing = if (label == option) null else option,
+                        selected = selected == option,
+                        onClick = { selected = option },
+                    )
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(selected) }) { Text("Nastaviť") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušiť") } },
+        confirmButton = { DialogPrimaryButton(onClick = { onConfirm(selected) }) { Text("Nastaviť") } },
+        dismissButton = { DialogTextButton(onClick = onDismiss) { Text("Zrušiť") } },
     )
 }
