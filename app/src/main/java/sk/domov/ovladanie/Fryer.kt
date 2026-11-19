@@ -132,6 +132,30 @@ object FryerRecipes {
         tempC = snapTemp(st.tempC),
     )
 
+    /** Predvyplnenie nového receptu zo stavu fritézy (čas mimo rozsahu, napr. 0 vo vypnutom stave, sa nahradí 15 min). */
+    fun draft(st: FryerState): FryerRecipe = FryerRecipe(
+        id = "",
+        name = "",
+        mode = st.mode.trim(),
+        minutes = st.minutes.takeIf { it in Fryer.TIME_MIN..Fryer.TIME_MAX } ?: 15,
+        tempC = snapTemp(st.tempC),
+    )
+
+    /** Uloženie upraveného receptu (podľa id). Prázdny názov alebo názov iného receptu zoznam nezmení. */
+    fun update(list: List<FryerRecipe>, recipe: FryerRecipe): List<FryerRecipe> {
+        val clean = cleanName(recipe.name)
+        if (clean.isEmpty() || list.none { it.id == recipe.id }) return list
+        val clash = find(list, clean)
+        if (clash != null && clash.id != recipe.id) return list
+        val fixed = recipe.copy(
+            name = clean,
+            mode = recipe.mode.trim(),
+            minutes = recipe.minutes.coerceIn(Fryer.TIME_MIN, Fryer.TIME_MAX),
+            tempC = snapTemp(recipe.tempC),
+        )
+        return list.map { if (it.id == recipe.id) fixed else it }
+    }
+
     fun snapTemp(celsius: Int): Int =
         ((celsius.toFloat() / Fryer.TEMP_STEP).roundToInt() * Fryer.TEMP_STEP).coerceIn(Fryer.TEMP_MIN, Fryer.TEMP_MAX)
 

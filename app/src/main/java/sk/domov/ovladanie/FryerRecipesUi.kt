@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package sk.domov.ovladanie
 
 import android.widget.Toast
@@ -7,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
@@ -25,38 +27,43 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /** Čo sa práve robí s receptom (určuje, ktoré okno je otvorené). */
 private sealed interface RecipeAction {
-    data object SaveNew : RecipeAction
-    data class Rename(val recipe: FryerRecipe) : RecipeAction
+    data object New : RecipeAction
+    data class Edit(val recipe: FryerRecipe) : RecipeAction
     data class Overwrite(val recipe: FryerRecipe) : RecipeAction
     data class Delete(val recipe: FryerRecipe) : RecipeAction
     data class ApplyWhileRunning(val recipe: FryerRecipe) : RecipeAction
 }
 
 /**
- * Karta „Recepty“ v detaile fritézy: uloží aktuálne nastavenie (režim, čas, teplota) pod názvom a jedným ťuknutím ho
- * znova nastaví. Recept fritézu nikdy nespustí – štart je vždy zvlášť (a s potvrdením).
+ * Karta „Recepty“ v detaile fritézy. Recept = názov + režim + čas + teplota. Dá sa vytvoriť a upraviť kedykoľvek (aj pri
+ * vypnutej fritéze – nezávisle od jej stavu); nastaviť na fritéze sa dá, keď je zapnutá ([enabled]). Recept fritézu
+ * nikdy nespustí – štart je vždy zvlášť (a s potvrdením).
  */
 @Composable
 fun FryerRecipesCard(
     deviceId: String,
     spec: FryerSpec,
     st: FryerState,
+    modes: List<String>,
     enabled: Boolean,
     onCommand: (Map<String, Any>) -> Unit,
 ) {
@@ -71,6 +78,7 @@ fun FryerRecipesCard(
     }
 
     fun applyRecipe(r: FryerRecipe) {
+        if (!enabled) return
         val steps = FryerRecipes.steps(spec, r, st)
         if (steps.isEmpty()) {
             Toast.makeText(context, "Už je nastavené: ${r.name}", Toast.LENGTH_SHORT).show()
@@ -94,10 +102,10 @@ fun FryerRecipesCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Recepty", style = MaterialTheme.typography.titleMedium)
-                TextButton(onClick = { action = RecipeAction.SaveNew }, enabled = enabled) {
+                TextButton(onClick = { action = RecipeAction.New }) {
                     Icon(Sym.add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Uložiť aktuálne")
+                    Text("Nový recept")
                 }
             }
             if (recipes.isEmpty()) {
@@ -107,50 +115,50 @@ fun FryerRecipesCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            } else {
-                recipes.forEach { r ->
-                    RecipeRow(
-                        recipe = r,
-                        selected = FryerRecipes.matches(r, st),
-                        enabled = enabled,
-                        onApply = { if (st.running) action = RecipeAction.ApplyWhileRunning(r) else applyRecipe(r) },
-                        onRename = { action = RecipeAction.Rename(r) },
-                        onOverwrite = { action = RecipeAction.Overwrite(r) },
-                        onDelete = { action = RecipeAction.Delete(r) },
-                    )
-                }
+            }
+            if (!enabled) {
+                Text(
+                    "Recepty môžeš vytvárať a upravovať aj teraz. Na fritéze sa dajú nastaviť, keď je zapnutá " +
+                        "(a si na domácej WiFi).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            recipes.forEach { r ->
+                RecipeRow(
+                    recipe = r,
+                    selected = FryerRecipes.matches(r, st),
+                    enabled = enabled,
+                    onApply = { if (st.running) action = RecipeAction.ApplyWhileRunning(r) else applyRecipe(r) },
+                    onEdit = { action = RecipeAction.Edit(r) },
+                    onOverwrite = { action = RecipeAction.Overwrite(r) },
+                    onDelete = { action = RecipeAction.Delete(r) },
+                )
             }
         }
     }
 
     when (val a = action) {
         null -> {}
-        RecipeAction.SaveNew -> {
-            val current = FryerRecipes.fromState("", "x", st)
-            RecipeNameDialog(
-                title = "Nový recept",
-                confirmText = "Uložiť",
-                initial = "",
-                summary = FryerRecipes.describe(current),
-                existing = recipes,
-                renaming = null,
-                onDismiss = { action = null },
-                onConfirm = { name ->
-                    commit(FryerRecipes.upsert(recipes, FryerRecipes.fromState(RecipeStore.newId(), name, st)))
-                    action = null
-                },
-            )
-        }
-        is RecipeAction.Rename -> RecipeNameDialog(
-            title = "Premenovať recept",
-            confirmText = "Uložiť",
-            initial = a.recipe.name,
-            summary = FryerRecipes.describe(a.recipe),
+        RecipeAction.New -> RecipeEditDialog(
+            editing = null,
+            draft = FryerRecipes.draft(st),
+            modes = modes,
             existing = recipes,
-            renaming = a.recipe,
             onDismiss = { action = null },
-            onConfirm = { name ->
-                commit(FryerRecipes.rename(recipes, a.recipe.id, name))
+            onConfirm = { r ->
+                commit(FryerRecipes.upsert(recipes, r))
+                action = null
+            },
+        )
+        is RecipeAction.Edit -> RecipeEditDialog(
+            editing = a.recipe,
+            draft = a.recipe,
+            modes = modes,
+            existing = recipes,
+            onDismiss = { action = null },
+            onConfirm = { r ->
+                commit(FryerRecipes.update(recipes, r))
                 action = null
             },
         )
@@ -216,7 +224,7 @@ private fun RecipeRow(
     selected: Boolean,
     enabled: Boolean,
     onApply: () -> Unit,
-    onRename: () -> Unit,
+    onEdit: () -> Unit,
     onOverwrite: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -237,7 +245,7 @@ private fun RecipeRow(
             .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f).padding(vertical = 6.dp)) {
+        Column(modifier = Modifier.weight(1f).padding(vertical = 6.dp).alpha(if (enabled) 1f else 0.6f)) {
             Text(recipe.name, style = MaterialTheme.typography.bodyLarge, color = scheme.onSurface)
             Text(
                 FryerRecipes.describe(recipe),
@@ -258,7 +266,7 @@ private fun RecipeRow(
                 Icon(Sym.moreVert, contentDescription = "Viac", tint = scheme.onSurfaceVariant)
             }
             DomovMenu(expanded = menu, onDismiss = { menu = false }) {
-                DomovMenuItem("Premenovať", Sym.edit, onClick = { menu = false; onRename() })
+                DomovMenuItem("Upraviť", Sym.edit, onClick = { menu = false; onEdit() })
                 DomovMenuItem("Prepísať aktuálnym nastavením", Sym.refresh, enabled = enabled, onClick = { menu = false; onOverwrite() })
                 DomovMenuItem("Zmazať", Sym.delete, onClick = { menu = false; onDelete() })
             }
@@ -266,44 +274,61 @@ private fun RecipeRow(
     }
 }
 
-/** Okno s názvom receptu (nový alebo premenovanie). Nový recept s existujúcim názvom ten starý prepíše. */
+/**
+ * Okno na vytvorenie (nový) alebo úpravu ([editing]) receptu: názov, režim, čas a teplota. Pri novom receptu sú hodnoty
+ * predvyplnené z fritézy ([draft]), dajú sa ale zmeniť, takže funguje aj pri vypnutej fritéze. Nový recept s existujúcim
+ * názvom ten starý prepíše.
+ */
 @Composable
-private fun RecipeNameDialog(
-    title: String,
-    confirmText: String,
-    initial: String,
-    summary: String,
+private fun RecipeEditDialog(
+    editing: FryerRecipe?,
+    draft: FryerRecipe,
+    modes: List<String>,
     existing: List<FryerRecipe>,
-    renaming: FryerRecipe?,
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
+    onConfirm: (FryerRecipe) -> Unit,
 ) {
-    var name by remember { mutableStateOf(initial) }
+    val scheme = MaterialTheme.colorScheme
+    var name by remember { mutableStateOf(draft.name) }
+    var mode by remember { mutableStateOf(draft.mode) }
+    var minutes by remember { mutableIntStateOf(draft.minutes.coerceIn(Fryer.TIME_MIN, Fryer.TIME_MAX)) }
+    var temp by remember { mutableIntStateOf(FryerRecipes.snapTemp(draft.tempC)) }
+
     val clean = FryerRecipes.cleanName(name)
-    val clash = FryerRecipes.find(existing, clean)?.takeIf { it.id != renaming?.id }
-    val full = renaming == null && clash == null && !FryerRecipes.canAdd(existing, clean)
+    val clash = FryerRecipes.find(existing, clean)?.takeIf { it.id != editing?.id }
+    val full = editing == null && clash == null && !FryerRecipes.canAdd(existing, clean)
     val error = when {
-        renaming != null && clash != null -> "Recept s týmto názvom už máš."
+        editing != null && clash != null -> "Recept s týmto názvom už máš."
         full -> "Máš už ${FryerRecipes.MAX_RECIPES} receptov. Niektorý najprv zmaž."
         else -> null
     }
-    val note = if (renaming == null && clash != null) "Recept s týmto názvom už je, prepíše sa." else null
-    val ok = clean.isNotEmpty() && error == null
+    val note = if (editing == null && clash != null) "Recept s týmto názvom už je, prepíše sa." else null
     val hint = error ?: note
+    val ok = clean.isNotEmpty() && error == null
 
     DomovDialog(
         onDismiss = onDismiss,
-        title = { Text(title) },
+        title = { Text(if (editing == null) "Nový recept" else "Upraviť recept") },
         icon = { Icon(Sym.skillet, null) },
         confirmButton = {
-            DialogPrimaryButton(onClick = { onConfirm(clean) }, enabled = ok) {
-                Text(if (renaming == null && clash != null) "Prepísať" else confirmText)
-            }
+            DialogPrimaryButton(
+                onClick = {
+                    onConfirm(
+                        FryerRecipe(
+                            id = editing?.id ?: RecipeStore.newId(),
+                            name = clean,
+                            mode = mode.trim(),
+                            minutes = minutes,
+                            tempC = temp,
+                        ),
+                    )
+                },
+                enabled = ok,
+            ) { Text(if (editing == null && clash != null) "Prepísať" else "Uložiť") }
         },
         dismissButton = { DialogTextButton(onClick = onDismiss) { Text("Zrušiť") } },
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             DomovTextField(
                 value = name,
                 onValueChange = { name = it.take(FryerRecipes.NAME_MAX) },
@@ -315,10 +340,76 @@ private fun RecipeNameDialog(
                 } else {
                     null
                 },
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { if (ok) onConfirm(clean) }),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth(),
             )
+            DomovTextField(
+                value = mode,
+                onValueChange = { mode = it.take(40) },
+                label = { Text("Režim (voliteľné)") },
+                singleLine = true,
+                supportingText = {
+                    Text(
+                        if (modes.isEmpty()) "Názov presne tak, ako ho fritéza hlási (napr. Chips). Prázdne = režim sa nemení."
+                        else "Ťukni na režim, ktorý appka už videla. Prázdne = režim sa nemení.",
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (modes.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    modes.forEach { m -> DomovChip(m, selected = m == mode.trim()) { mode = m } }
+                }
+            }
+            EditorSlider(
+                title = "Čas varenia",
+                valueText = "$minutes min",
+                value = minutes.toFloat(),
+                range = Fryer.TIME_MIN.toFloat()..Fryer.TIME_MAX.toFloat(),
+                steps = Fryer.TIME_MAX - Fryer.TIME_MIN - 1,
+                onChange = { minutes = it.roundToInt().coerceIn(Fryer.TIME_MIN, Fryer.TIME_MAX) },
+            )
+            EditorSlider(
+                title = "Teplota",
+                valueText = "$temp °C",
+                value = temp.toFloat(),
+                range = Fryer.TEMP_MIN.toFloat()..Fryer.TEMP_MAX.toFloat(),
+                steps = (Fryer.TEMP_MAX - Fryer.TEMP_MIN) / Fryer.TEMP_STEP - 1,
+                onChange = { temp = FryerRecipes.snapTemp(it.roundToInt()) },
+            )
+            Text(
+                "Recept fritézu nikdy nespustí.",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
         }
+    }
+}
+
+@Composable
+private fun EditorSlider(
+    title: String,
+    valueText: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    steps: Int,
+    onChange: (Float) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
+            Text(valueText, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurface)
+        }
+        WideSlider(
+            value = value,
+            range = range,
+            enabled = true,
+            track = SolidColor(scheme.surfaceVariant),
+            fill = amberFill(),
+            steps = steps,
+            onChange = onChange,
+            onFinished = {},
+        )
     }
 }

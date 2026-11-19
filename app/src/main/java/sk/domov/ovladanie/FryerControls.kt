@@ -49,94 +49,98 @@ fun FryerControls(
     // Režimy, ktoré appka už videla (zariadenie ich neposiela ako zoznam).
     val modes = (ModeMemory.list(context, deviceId) + st.mode).filter { it.isNotBlank() }.distinct()
 
-    Column(
-        modifier = Modifier.alpha(if (enabled) 1f else 0.45f),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        if (!enabled) {
-            Text(
-                text = "Zapni fritézu, aby si mohol nastavovať režim, čas a teplotu.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Stav", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = Fryer.statusLabel(st.statusRaw) +
-                            (st.remainingMin?.takeIf { st.running && it > 0 }?.let { " · zostáva $it min" } ?: ""),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+    // Stlmená (zamknutá) je len priama obsluha; recepty sa dajú vytvárať a upravovať aj pri vypnutej fritéze
+    val dim = Modifier.alpha(if (enabled) 1f else 0.45f)
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(modifier = dim, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (!enabled) {
+                Text(
+                    text = "Zapni fritézu, aby si mohol nastavovať režim, čas a teplotu.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Stav", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = Fryer.statusLabel(st.statusRaw) +
+                                (st.remainingMin?.takeIf { st.running && it > 0 }?.let { " · zostáva $it min" } ?: ""),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Režim", style = MaterialTheme.typography.titleMedium)
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        modes.forEach { name ->
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Režim", style = MaterialTheme.typography.titleMedium)
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            modes.forEach { name ->
+                                FilterChip(
+                                    selected = name == st.mode,
+                                    onClick = { if (enabled && name != st.mode) onCommand(Fryer.mode(spec, name)) },
+                                    label = { Text(name) },
+                                    enabled = enabled,
+                                )
+                            }
                             FilterChip(
-                                selected = name == st.mode,
-                                onClick = { if (enabled && name != st.mode) onCommand(Fryer.mode(spec, name)) },
-                                label = { Text(name) },
+                                selected = false,
+                                onClick = { customMode = true },
+                                label = { Text("Iný…") },
                                 enabled = enabled,
                             )
                         }
-                        FilterChip(
-                            selected = false,
-                            onClick = { customMode = true },
-                            label = { Text("Iný…") },
-                            enabled = enabled,
+                        Text(
+                            text = "Zoznam režimov sa dopĺňa sám: appka si zapamätá každý režim, ktorý sa raz objaví " +
+                                "(napr. keď ho vyberieš v Tuya appke). Iný režim môžeš zadať aj ručne cez Iný….",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Text(
-                        text = "Zoznam režimov sa dopĺňa sám: appka si zapamätá každý režim, ktorý sa raz objaví " +
-                            "(napr. keď ho vyberieš v Tuya appke). Iný režim môžeš zadať aj ručne cez Iný….",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+                    LabeledSlider(
+                        title = "Čas varenia",
+                        value = st.minutes.toFloat().coerceIn(Fryer.TIME_MIN.toFloat(), Fryer.TIME_MAX.toFloat()),
+                        range = Fryer.TIME_MIN.toFloat()..Fryer.TIME_MAX.toFloat(),
+                        enabled = enabled,
+                        valueText = { "${it.roundToInt()} min" },
+                        onFinished = { onCommand(Fryer.cookTime(spec, it)) },
+                        onLive = liveOf { m: Float -> Fryer.cookTime(spec, m) },
+                        steps = Fryer.TIME_MAX - Fryer.TIME_MIN - 1,
+                    )
+                    LabeledSlider(
+                        title = "Teplota",
+                        value = st.tempC.toFloat().coerceIn(Fryer.TEMP_MIN.toFloat(), Fryer.TEMP_MAX.toFloat()),
+                        range = Fryer.TEMP_MIN.toFloat()..Fryer.TEMP_MAX.toFloat(),
+                        enabled = enabled,
+                        valueText = { "${((it / Fryer.TEMP_STEP).roundToInt() * Fryer.TEMP_STEP)} °C" },
+                        onFinished = { onCommand(Fryer.temperature(spec, it)) },
+                        onLive = liveOf { t: Float -> Fryer.temperature(spec, t) },
+                        steps = (Fryer.TEMP_MAX - Fryer.TEMP_MIN) / Fryer.TEMP_STEP - 1,
                     )
                 }
-
-                LabeledSlider(
-                    title = "Čas varenia",
-                    value = st.minutes.toFloat().coerceIn(Fryer.TIME_MIN.toFloat(), Fryer.TIME_MAX.toFloat()),
-                    range = Fryer.TIME_MIN.toFloat()..Fryer.TIME_MAX.toFloat(),
-                    enabled = enabled,
-                    valueText = { "${it.roundToInt()} min" },
-                    onFinished = { onCommand(Fryer.cookTime(spec, it)) },
-                    onLive = liveOf { m: Float -> Fryer.cookTime(spec, m) },
-                    steps = Fryer.TIME_MAX - Fryer.TIME_MIN - 1,
-                )
-                LabeledSlider(
-                    title = "Teplota",
-                    value = st.tempC.toFloat().coerceIn(Fryer.TEMP_MIN.toFloat(), Fryer.TEMP_MAX.toFloat()),
-                    range = Fryer.TEMP_MIN.toFloat()..Fryer.TEMP_MAX.toFloat(),
-                    enabled = enabled,
-                    valueText = { "${((it / Fryer.TEMP_STEP).roundToInt() * Fryer.TEMP_STEP)} °C" },
-                    onFinished = { onCommand(Fryer.temperature(spec, it)) },
-                    onLive = liveOf { t: Float -> Fryer.temperature(spec, t) },
-                    steps = (Fryer.TEMP_MAX - Fryer.TEMP_MIN) / Fryer.TEMP_STEP - 1,
-                )
             }
+
         }
 
-        FryerRecipesCard(deviceId = deviceId, spec = spec, st = st, enabled = enabled, onCommand = onCommand)
+        FryerRecipesCard(deviceId = deviceId, spec = spec, st = st, modes = modes, enabled = enabled, onCommand = onCommand)
 
-        if (st.running) {
-            Button(
-                onClick = { onCommand(Fryer.start(spec, false)) },
-                enabled = enabled,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-            ) { Text("Stop") }
-        } else {
-            Button(
-                onClick = { confirmStart = true },
-                enabled = enabled,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Štart") }
+        Column(modifier = dim) {
+            if (st.running) {
+                Button(
+                    onClick = { onCommand(Fryer.start(spec, false)) },
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text("Stop") }
+            } else {
+                Button(
+                    onClick = { confirmStart = true },
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Štart") }
+            }
         }
     }
 
