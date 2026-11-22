@@ -169,8 +169,10 @@ private fun moonLitPath(cx: Float, cy: Float, r: Float, k: Float, lightOnRight: 
     val a = (1f - 2f * k) * dir
     val path = Path()
     val oval = Rect(cx - r, cy - r, cx + r, cy + r)
-    // sever (−90°) na juh (90°): pri svetle sprava proti smeru hodinových ručičiek (cez východ)
-    path.arcTo(oval, -90f, if (lightOnRight) -180f else 180f, false)
+    // Compose: 0° = východ (3. hodina), kladný uhol = v smere hodinových ručičiek (os y smeruje dole).
+    // Z severu (−90°) na juh (90°): pri svetle sprava +180° (cez východ), pri svetle zľava −180° (cez západ).
+    // Zmena smeru obráti osvetlenie: ikona by ukazovala tmavú časť namiesto svetlej (chyba do 1.34.3).
+    path.arcTo(oval, -90f, if (lightOnRight) 180f else -180f, true)
     val steps = 64
     for (i in 0..steps) {
         val t = (PI / 2.0 - PI * i / steps).toFloat()
