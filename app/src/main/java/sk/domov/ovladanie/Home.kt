@@ -226,7 +226,7 @@ internal fun HomeMain(
                     item(span = { GridItemSpan(maxLineSpan) }, key = "moon") { MoonStrip(info) }
                 }
             }
-            if (!wifiOn) item(span = { GridItemSpan(maxLineSpan) }, key = "wifi") { WifiBanner(cloudSet = cloudSet, onCloud = { onPage("cloud") }) }
+            // Mimo domácej WiFi ukazuje len malý chip „Bez WiFi“ v hlavičke; veľké červené upozornenie je na Domove zrušené (od 1.34.5)
             notice?.let { msg -> item(span = { GridItemSpan(maxLineSpan) }, key = "notice") { NoticeBanner(message = msg, onDismiss = { vm.dismissNotice() }) } }
 
             item(span = { GridItemSpan(maxLineSpan) }, key = "actions") {
