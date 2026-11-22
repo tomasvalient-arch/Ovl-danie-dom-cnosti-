@@ -82,6 +82,15 @@ func (s *session) run() {
 	defer close(s.done)
 	s.srv.log.Printf("pripojený telefón „%s“ (%s)", s.name, s.ip)
 	defer s.srv.log.Printf("odpojený telefón „%s“ (%s)", s.name, s.ip)
+	// vstupy od telefónu môžu prísť skôr, než zachytávanie pošle prvý obraz: monitor pre ne určíme hneď
+	if mons := s.srv.be.Screen.Monitors(); len(mons) > 0 {
+		mon := pickMonitor(mons, s.cfg.monitor)
+		k := s.cfg.divisor
+		if k == 0 {
+			k = chooseDivisor(mon.W)
+		}
+		s.setCurrent(mon, k)
+	}
 	capDone := make(chan struct{})
 	go func() {
 		defer close(capDone)
