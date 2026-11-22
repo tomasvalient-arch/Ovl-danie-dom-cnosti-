@@ -1,0 +1,117 @@
+ok  	domovpc	3.612s
+Priblíženie a posun
+  OK   celý obraz vo výške aj šírke okna
+  OK   obraz je v zvislom strede
+  OK   bod nad obrazom / mimo obrazu
+  OK   priblíženie drží bod pod prstom
+  OK   zoom 2.5
+  OK   okraj obrazu sa nedá odtiahnuť dnu (ľavý/horný)
+  OK   okraj obrazu sa nedá odtiahnuť (pravý/dolný)
+  OK   najväčšie priblíženie je obmedzené
+  OK   oddialenie sa zastaví na celom obraze
+  OK   po oddialení je obraz opäť vycentrovaný
+  OK   kurzor v pravom dolnom rohu sa dostane do okna
+  OK   kurzor uprostred obrazu sa dostane do okna s okrajom
+  OK   kurzor v ľavom hornom rohu sa dostane do okna
+  OK   iný monitor = nové priblíženie 1
+  OK   po otočení sa obraz znova vpasuje
+Klávesnica
+  OK   obyčajný text ide ako Unicode
+  OK   Ctrl: 1. ťuk = podržaný
+  OK   Ctrl+C a Ctrl sa sám pustí
+  OK   Ctrl: 2. ťuk = zamknutý
+  OK   zamknutý Ctrl zostáva po viacerých klávesoch
+  OK   Ctrl: 3. ťuk = pustený
+  OK   Shift zväčší písmená a pustí sa
+  OK   Alt+Tab cez lepivý Alt
+  OK   releaseAll pustí všetky držané: v5b v11 ^11 ^5b
+  OK   po releaseAll nič nezostalo
+  OK   Ctrl+Shift+Esc
+  OK   Ctrl+Shift+C pri veľkom písmene: v10 v43 ^43 ^11 ^10
+Preklad kláves a písanie z klávesnice telefónu
+  OK   KEYCODE_A..Z → VK A..Z
+  OK   KEYCODE_0..9 → VK 0..9
+  OK   Backspace, Enter, Esc
+  OK   F1..F12
+  OK   šípky
+  OK   Späť a Domov sa neposielajú
+  OK   diff: nový text
+  OK   diff: pripísanie
+  OK   diff: oprava posledného znaku
+  OK   diff: zmazanie všetkého
+  OK   diff: emoji sa nerozdelí uprostred páru
+  OK   diff: medzera po slove
+Gestá: touchpad
+  OK   ťuk = ľavý klik
+  OK   ťahanie hýbe kurzorom, bez kliku (Σx=117)
+  OK   pomalý pohyb (100 px) sa neutratí: 100
+  OK   rýchly ťah (268) ide ďalej než pomalý (100) pri rovnakej dráhe
+  OK   pred uplynutím času sa nič nestane
+  OK   dlhý ťuk = pravý klik + odozva: b2v b2^ hap
+  OK   ťuk dvoma prstami = pravý klik
+  OK   dvojitý ťuk = dva kliky
+  OK   ťuk+ťahať = ľavé tlačidlo držané počas pohybu
+  OK   ťuk+podržať: tlačidlo sa stlačí a pri zdvihnutí pustí: b1v hap b1^
+  OK   pomalé ďalšie ťuknutie je len pohyb
+  OK   dotyk 400 ms bez pohybu nie je ani ťuk, ani dlhý ťuk
+Gestá: rolovanie a priblíženie
+  OK   prsty dole = rolovanie nahor (prirodzené), Σ=480
+  OK   bez prirodzeného rolovania je smer opačný
+  OK   vodorovné rolovanie, Σx=-480
+  OK   štipnutie = priblíženie
+  OK   tretí prst: gesto je mŕtve, nič sa nepošle
+  OK   druhý prst počas ťahania pustí tlačidlo
+  OK   cancel pustí držané tlačidlo
+Gestá: priamy dotyk
+  OK   ťuk = klik presne na mieste: at:250,400 b1v b1^
+  OK   ťuk mimo obrazu nič nerobí
+  OK   jeden prst v priamom režime posúva obraz
+  OK   dlhý ťuk v priamom režime = pravý klik na mieste
+  OK   ťuk+ťahať v priamom režime ťahá od miesta dotyku
+  OK   dvojprstový ťuk v priamom režime = pravý klik v strede prstov: at:250,200 b2v b2^
+PcLogicTest: OK
+Pomocné funkcie
+  OK   normalizácia kódu
+  OK   znak I nie je v abecede
+  OK   magický paket Wake-on-LAN (102 B)
+  OK   formát MAC
+Párovanie
+  OK   stránka správy vrátila kód a obsah QR
+  OK   obsah QR sa dá načítať
+  OK   hľadanie v sieti nájde PC
+  OK   telefón dostal trvalý kľúč
+  OK   SESSION_INFO (monitory, príznaky)
+  OK   SCREEN 640x360
+  OK   prvý obraz: 6 pásov, všetky JPEG sa rozkódujú
+Vstupy
+  OK   všetky vstupy dorazili
+  OK   poradie a obsah vstupov [rel:3,-4, btn:1:true, btn:1:false, wheel:0,120, key:65:true, key:65:false, text:Ľščť 😀, abs:0.50,0.00@0, key:17:true]
+  OK   pohyby a stredné tlačidlo dorazili
+  OK   50 pohybov = súčet (50,100) pred kliknutím
+Poloha kurzora
+  OK   PC posiela polohu kurzora (stred obrazu)
+Schránka, monitory, napájanie
+  OK   schránka: zápis a čítanie
+  OK   prepnutie na druhý monitor
+  OK   zmenšenie na polovicu
+  OK   napájanie: PC potvrdilo príkaz
+  OK   ping/pong: odozva 1 ms
+Odpojenie a opätovné pripojenie
+  OK   onClosed po zatvorení
+  OK   podržaný Ctrl sa po odpojení uvoľnil
+  OK   pripojenie uloženým kľúčom (obraz prišiel)
+  OK   nová relácia dostala obraz
+  OK   vytlačená relácia dostala upozornenie NOTICE_REPLACED
+  OK   stará relácia sa zatvorila
+  OK   iný PC na adrese: Na tejto adrese je iný PC, než ktorý sa čakal.
+  OK   connectPaired s tým istým ID PC prejde
+  OK   zlý kľúč: PC sa nevie preukázať uloženým kľúčom. Je to naozaj ten istý PC? Skús ho spárovať znova.
+  OK   neznámy telefón: PC tento telefón nepozná. Spáruj ho znova (PC ho mohol odstrániť).
+  OK   párovanie je po úspešnom spárovaní zatvorené: Párovanie nie je na PC zapnuté. Na PC klikni „Spárovať nový telefón“.
+Párovanie len kódom (ručné zadanie IP)
+  OK   nové párovacie okno
+  OK   zlý kód: Nesprávny párovací kód.
+  OK   ID PC z QR nesedí: Na tejto adrese je iný PC, než ktorý sa čakal.
+  OK   párovanie len kódom prebehlo, obraz prišiel
+  OK   nedostupný PC: Nepodarilo sa pripojiť k PC (127.0.0.1:1)
+PcClientTest: OK
