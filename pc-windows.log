@@ -1,0 +1,68 @@
+=== RUN   TestQRSizes
+--- PASS: TestQRSizes (0.01s)
+=== RUN   TestPBKDF2Vector
+--- PASS: TestPBKDF2Vector (0.00s)
+=== RUN   TestCodeNormalize
+--- PASS: TestCodeNormalize (0.00s)
+=== RUN   TestLANAddr
+--- PASS: TestLANAddr (0.00s)
+=== RUN   TestSessionKeysDirectional
+--- PASS: TestSessionKeysDirectional (0.00s)
+=== RUN   TestPairingRequiresWindow
+--- PASS: TestPairingRequiresWindow (0.00s)
+=== RUN   TestUnknownDevice
+--- PASS: TestUnknownDevice (0.00s)
+=== RUN   TestWrongCodeAndLockout
+--- PASS: TestWrongCodeAndLockout (0.23s)
+=== RUN   TestClientRejectsServerWithWrongKey
+--- PASS: TestClientRejectsServerWithWrongKey (0.04s)
+=== RUN   TestPairThenReconnectAndStream
+--- PASS: TestPairThenReconnectAndStream (0.17s)
+=== RUN   TestMonitorSwitchAndDivisor
+--- PASS: TestMonitorSwitchAndDivisor (0.22s)
+=== RUN   TestLockedDesktopNotice
+--- PASS: TestLockedDesktopNotice (0.45s)
+=== RUN   TestCaptureErrorRecovers
+--- PASS: TestCaptureErrorRecovers (1.34s)
+=== RUN   TestTakeover
+--- PASS: TestTakeover (0.08s)
+=== RUN   TestPowerCommand
+--- PASS: TestPowerCommand (0.88s)
+=== RUN   TestBanAfterFailures
+--- PASS: TestBanAfterFailures (0.00s)
+=== RUN   TestDiscovery
+--- PASS: TestDiscovery (0.10s)
+=== RUN   TestStorePersists
+--- PASS: TestStorePersists (0.00s)
+=== RUN   TestCleanName
+--- PASS: TestCleanName (0.00s)
+=== RUN   TestEncoderDividerAndDiff
+--- PASS: TestEncoderDividerAndDiff (0.00s)
+=== RUN   TestCursorReports
+--- PASS: TestCursorReports (0.23s)
+PASS
+ok  	domovpc	3.787s
+Monitory: 1
+  #0 1024x768 na (0,0) (hlavný)
+Plocha: odomknutá
+Zachytenie 1024x768: 27 ms na snímku, neprázdnych vzoriek: 8108
+Kódovanie (delič 1): 12 pásov, 204 kB, 7 ms
+Odhad rýchlosti pri plnej zmene obrazu: asi 29 snímok/s
+Myš: pohyb funguje
+Schránka: zápis a čítanie funguje (aj diakritika a emoji)
+SAMOTEST: OK
+[server] 15:47:36 Domov PC 1.0.0 beží: telefón port 61868, správa http://127.0.0.1:61869/
+server na 127.0.0.1:61868, správa na http://127.0.0.1:61869
+párovací kód QBCCD-PHEJJ, QR 9453 B, obsah "domovpc:1:QBCCDPHEJJ:066da9a58c26be527d6611305f82f827:10.1.1.7:61868"
+[server] 15:47:36 spárovaný telefón „E2E telefón“ (127.0.0.1)
+[server] 15:47:36 pripojený telefón „E2E telefón“ (127.0.0.1)
+spárované, kľúč 32 B
+obraz 1024x768 (delič 1)
+prvý obraz: 12 pásov, 204 kB
+ping/pong: OK
+schránka cez protokol: OK
+[server] 15:47:36 odpojený telefón „E2E telefón“ (127.0.0.1)
+[server] 15:47:36 pripojený telefón „E2E telefón“ (127.0.0.1)
+opätovné pripojenie uloženým kľúčom: OK
+stránka správy: spárovaných telefónov 1
+E2E: OK
