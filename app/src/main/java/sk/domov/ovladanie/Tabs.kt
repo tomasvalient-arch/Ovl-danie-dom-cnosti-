@@ -346,6 +346,11 @@ internal fun SettingsTab(
             )
         }
 
+        SectionLabel("Počítač")
+        DomovCard(padding = 10.dp, spacing = 0.dp) {
+            SettingRow(Sym.devicesOther, "Ovládanie PC", caption = "Obraz, myš a klávesnica PC z telefónu na domácej WiFi", onClick = { onPage("pc") })
+        }
+
         SectionLabel("Aplikácia")
         DomovCard(padding = 10.dp, spacing = 0.dp) {
             SettingRow(

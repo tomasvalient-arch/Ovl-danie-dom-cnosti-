@@ -134,6 +134,8 @@ fun HomeScreen(vm: HomeViewModel) {
                 onShare = { pages += "share" },
                 onJoin = { pages += "join" },
             )
+            "pc" -> PcScreen(onBack = { pages.removeAt(pages.size - 1) }, onAdd = { pages += "pc-add" })
+            "pc-add" -> PcAddScreen(onBack = { pages.removeAt(pages.size - 1) })
             "share" -> ShareAppScreen(vm = vm, onBack = { pages.removeAt(pages.size - 1) })
             "join" -> JoinHouseholdScreen(vm = vm, onBack = { pages.removeAt(pages.size - 1) })
             "night" -> NightSceneScreen(vm = vm, onBack = { pages.removeAt(pages.size - 1) })

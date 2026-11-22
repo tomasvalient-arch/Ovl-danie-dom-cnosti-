@@ -1,14 +1,68 @@
-name: Zostaviť APK
+name: Zostaviť APK a Domov PC
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, pc-ovladanie]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  # Go + Java testy PC časti na Linuxe: protokol, server, QR, logika ovládania na telefóne
+  # a Java klient proti skutočnému PC programu s falošnou obrazovkou
+  pc-testy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Testy PC časti
+        run: sh tools/run-pc-tests.sh
+
+  # Program pre Windows: testy, samotest skutočného zachytenia obrazovky a vstupov, potom domov-pc.exe
+  pc-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: pc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - name: Kontrola kódu
+        run: go vet ./...
+
+      - name: Testy
+        run: go test -count=1 ./...
+
+      - name: Samotest (zachytenie obrazovky, myš, schránka)
+        run: go run . -selftest
+
+      - name: Test celej cesty (párovanie, obraz, vstupy)
+        run: go run . -e2e
+
+      - name: Zostaviť domov-pc.exe
+        run: go build -trimpath -ldflags "-H=windowsgui -s -w" -o ../domov-pc.exe .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Domov-PC
+          path: domov-pc.exe
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -32,11 +86,27 @@ jobs:
           name: Domov
           path: Domov.apk
 
-      # Pracovné buildy (správa commitu obsahuje [bez-release]) sa len zostavia, release sa nevytvorí
+  release:
+    needs: [pc-testy, pc-windows, build]
+    runs-on: ubuntu-latest
+    # Release sa robí len z hlavnej vetvy; pracovné buildy (správa commitu obsahuje [bez-release]) sa len zostavia
+    if: ${{ (github.ref_name == 'main' || github.ref_name == 'master') && !contains(github.event.head_commit.message, '[bez-release]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Domov
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Domov-PC
+
       - name: Release
-        if: ${{ !contains(github.event.head_commit.message, '[bez-release]') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: Domov (build ${{ github.run_number }})
-          files: Domov.apk
+          files: |
+            Domov.apk
+            domov-pc.exe

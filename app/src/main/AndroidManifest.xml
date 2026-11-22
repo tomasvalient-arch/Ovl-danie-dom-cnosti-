@@ -7,6 +7,8 @@
     <!-- hľadanie zariadení v sieti: príjem UDP broadcastov aj keď telefón šetrí batériu -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- ovládanie PC: WiFi zámok s nízkou odozvou počas otvorenej obrazovky ovládania -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- automatika príchod/odchod: služba na pozadí, spustenie po reštarte, notifikácie -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -33,6 +35,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- ovládanie PC z telefónu (obraz, myš, klávesnica): otáča sa bez reštartu spojenia -->
+        <activity
+            android:name=".PcRemoteActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".WidgetConfigActivity"
