@@ -366,6 +366,39 @@ Appka vie zobraziť a ovládať aj Zigbee zariadenia pripojené k Tuya bráne (n
 
 **Overenie.** Verzia 1.35.0 bola napísaná, kým brána ešte nedorazila, takže komunikácia je overená len proti simulovanej bráne podľa dokumentácie tinytuya. Po dorazení brány treba ešte ladenie (najmä tvary odpovedí konkrétnej brány) – pošli „Technické info“ brány a podzariadenia.
 
+## 24. Ovládanie PC z telefónu (od verzie 1.36)
+
+Z telefónu uvidíš obraz PC s Windowsom 10/11 a budeš ho ovládať: myš, klávesnica, schránka, vypnutie, uspanie, zamknutie a zapnutie PC. Funguje **len doma, na rovnakej WiFi** ako PC (spojenie z iných sietí program odmietne) a všetko ide šifrovane. Skladá sa z programu **Domov PC** pre Windows a z obrazovky v appke (Nastavenia → Počítač → Ovládanie PC).
+
+**Inštalácia na PC.** Z časti Releases na GitHube stiahni `domov-pc.exe` (pri tej istej zostave ako `Domov.apk`) a spusti ho. Nepotrebuje inštaláciu ani práva správcu. Windows pri prvom spustení ukáže okno firewallu: zaškrtni **Súkromné siete** a Povoliť prístup. (SmartScreen môže hlásiť „neznámy vydavateľ“, lebo program nie je podpísaný: Ďalšie informácie → Spustiť aj tak.) Otvorí sa stránka správy `http://127.0.0.1:47811/` (vidí ju len ten PC). Tam môžeš zapnúť „Spustiť program po prihlásení do Windows“, pozrieť spárované telefóny a skúsiť „Otestovať zachytenie obrazovky“.
+
+**Párovanie.** Na stránke správy klikni **Spárovať nový telefón**: ukáže sa QR kód a desaťznakový kód (platí 3 minúty a na jedno spárovanie). V appke Nastavenia → Ovládanie PC → Pridať PC → Naskenovať QR kód. Ak sa QR nedá, appka v sieti PC nájde sama (ťukni na jeho meno) alebo zadaj jeho adresu a kód ručne. Spárovanie je jednorazové: telefón dostane vlastný kľúč a po spárovaní sa PC pripojí bez kódu. Telefón môžeš kedykoľvek odstrániť na stránke správy (alebo „Zabudnúť tento PC“ v appke).
+
+**Ovládanie**
+- **Touchpad** (predvolený): jeden prst pohybuje kurzorom (s miernym zrýchlením), ťuknutie = ľavý klik, ťuknutie dvoma prstami alebo dlhé podržanie = pravý klik, ťuknutie a hneď podržanie (alebo ťuknutie a ťahanie) = ťahanie (presun okna, označovanie), dva prsty = rolovanie, štipnutie = priblíženie obrazu (priblížený obraz sa dá pri štipnutí aj posúvať).
+- **Priamy dotyk**: ťuknutie klikne tam, kam ťukneš; jeden prst posúva priblížený obraz; ostatné rovnako.
+- Klávesnica telefónu píše do PC (aj diakritika a emoji), tlačidlo **Klávesy** ukáže Esc, Tab, Ctrl/Alt/Shift/Win (ťuknutie = jeden znak, druhé = zamknuté, tretie = vypnuté), šípky, Enter, Backspace, Del, Home/End, PgUp/PgDn, F1–F12 a skratky Alt+Tab, Win+D, Správca úloh. Pripojená fyzická klávesnica funguje tiež.
+- **Schránka**: „Z PC do telefónu“ skopíruje označený text na PC (Ctrl+C) do schránky telefónu, „Z telefónu do PC“ pošle schránku telefónu do PC a vloží ju (Ctrl+V). Len text.
+- **Monitory**: pri viacerých monitoroch sa dá prepnúť, ktorý sa ukazuje. **Obraz a myš**: kvalita (automaticky / rýchla / ostrá), citlivosť myši, rolovanie podľa prsta alebo ako myš, nechať obrazovku telefónu zapnutú.
+- **PC** v paneli: Zamknúť, Uspať, Reštartovať, Vypnúť (každé sa potvrdzuje). Po reštarte sa appka sama pripojí znova (čaká až 4 minúty); po uspaní alebo vypnutí povie, že PC spí alebo sa vypol.
+
+**Zapnutie PC (Wake-on-LAN).** Po prvom pripojení si appka zapamätá MAC adresy PC. Potom ťukni na „Zapnúť PC“ (v zozname PC alebo po zlyhaní pripojenia): appka pošle budiaci signál a čaká, kým PC naštartuje a program sa ozve. Funguje len ak PC podporuje Wake-on-LAN: PC musí byť pripojený **ethernetom** (cez WiFi sa PC väčšinou zobudiť nedá), v BIOSe/UEFI musí byť zapnuté „Wake on LAN“ / „Power on by PCI-E“ a vo Windows (Správca zariadení → sieťová karta → Spravovanie napájania) povolené „Povoliť tomuto zariadeniu zobudiť počítač“. Rýchle spustenie Windowsu občas WoL po vypnutí (nie po uspaní) blokuje. Ak PC nenaštartuje, je to nastavenie PC, nie appky.
+
+**Čo sa nedá** (obmedzenia Windowsu, nie chyba programu)
+- Zamknutá obrazovka a prihlasovanie hesla, okná UAC („Chcete povoliť tejto aplikácii…“): Windows ich neukáže iným programom. Appka ukáže „PC je zamknutý“, odomkni ho priamo na PC.
+- Okná spustené ako správca nepríjmu vstup, ak program Domov PC nebeží ako správca (stránka správy to oznámi). Spusti Domov PC ako správca, ak to potrebuješ.
+- Ctrl+Alt+Del sa posielať nedá. Obsah chránený DRM (niektoré prehrávače a streamovacie služby) sa môže ukázať čierny.
+- Jeden telefón naraz: keď sa pripojí iný, prvý sa odpojí a povie to (nepripája sa sám späť, aby sa telefóny neprebíjali).
+- Zvuk sa neprenáša.
+
+**Ak sa telefón nevie pripojiť:** skontroluj, že je PC zapnutý, program beží (ikona/okno v Správcovi úloh `domov-pc.exe`) a telefón je na tej istej WiFi (nie na hosťovskej sieti ani mobilných dátach). Ak firewall okno zmizlo bez povolenia, na PC v príkazovom riadku ako správca: `netsh advfirewall firewall add rule name="Domov PC" dir=in action=allow protocol=TCP localport=47810 profile=private` a to isté s `protocol=UDP`. Po viacerých zlých kódoch sa adresa na 10 minút zablokuje.
+
+**Bezpečnosť.** Telefón a PC si pri každom spojení vzájomne preukážu kľúč (HMAC), prenos je AES-256-GCM a kód párovania sa nikdy neposiela, len z neho odvodený dôkaz (PBKDF2, 200 000 iterácií). Program neotvára nič von do internetu, pripojiť sa dajú len adresy z domácej siete a stránka správy počúva len na `127.0.0.1`. Kľúče telefónov sú v appke v šifrovanom úložisku (Android Keystore, mimo zálohy); na PC v `%LOCALAPPDATA%\DomovPC` (spolu s logom). Kto má spárovaný telefón, ovláda celý PC, preto telefón zamykaj a odstráň ho zo zoznamu, ak ho stratíš. Podrobnosti protokolu: `pc/PROTOCOL.md`.
+
+**Technicky.** `pc/` je program v Go bez cudzích knižníc (Windows: GDI zachytenie obrazu, `SendInput`, schránka, vypnutie a uspanie; mimo Windowsu len falošná obrazovka na testy; Wake-on-LAN posiela telefón). Obraz sa posiela ako JPEG pásy po 64 riadkov, len zmenené, s potvrdzovaním (najviac 2 obrazy naraz), pri širokých monitoroch zmenšený (delič 2 nad 2600 px, 3 nad 5000 px). V appke je jadro v Jave (`app/.../pc/`: `PcClient`, `PcGestures`, `PcViewport`, `PcKeyboard`…, testované bez Androidu) a obrazovky v Kotline (`PcSession.kt`, `RemoteScreenView.kt`, `PcRemoteActivity.kt`, `PcUi.kt`, `PcStore.kt`, `PcNet.kt`). Testy: `sh tools/run-pc-tests.sh` (Go testy, logika gest a priblíženia a Java klient proti skutočnému programu s falošnou obrazovkou); skutočné zachytenie obrazovky, myš a schránku overuje GitHub Actions na Windows (`-selftest` a `-e2e`).
+
+**Overenie.** Protokol, párovanie, obraz, vstupy a schránku overujú testy a beh na Windows runneri GitHub Actions. Na skutočnom telefóne a PC som obrazovky ovládania (gestá, klávesnica, rozloženie) nemohol vyskúšať, takže po prvom nainštalovaní môžu byť potrebné drobné úpravy citlivosti a vzhľadu: napíš, čo ti nesedí.
+
 ## Limity
 
 - Zariadenia pripojené cez Zigbee/Bluetooth bránu nie sú podporované (komunikujú cez bránu iným spôsobom).
@@ -468,3 +501,4 @@ Na Domove je pod Nákupom riadok **Udalosti**. Kým sa nič nechystá, je tenký
 - 1.34.4: **oprava ikony mesiaca** – ikona ukazovala opačné osvetlenie (pri priberajúcom mesiaci pribúdala tmavá časť namiesto svetlej, pri nove svietil celý disk). Oblúk osvetlenej strany (`moonLitPath` v `MoonAndroid.kt`) mal obrátený smer; teraz sedí osvetlenie aj strana pre všetky fázy (na severnej pologuli pri priberaní svetlo sprava).
 - 1.34.5: **na Domove zmizlo veľké červené upozornenie „Nie si na domácej WiFi“**; mimo domácej WiFi ostáva len malý chip „Bez WiFi“ v hlavičke. Upozornenie ostáva na obrazovke detailu zariadenia (`WifiBanner` v `DeviceScreen.kt`), kde chip nie je.
 - 1.35.0: **Zigbee zariadenia cez Tuya bránu** (senzory dverí/okien, pohybu, teploty a vlhkosti, vody, dymu; zásuvky, vypínače, žiarovky; tlačidlá len ako zobrazenie). Pridanie zo Synchronizácie s Tuya cloudom, skupina Senzory, brána s diagnostikou. Nové: `Zigbee.kt`, `cid` v `TuyaDevice`. Otestované len proti simulovanej bráne (pozri časť 23).
+- 1.36.0: **Ovládanie PC z telefónu** (obraz, myš, klávesnica, schránka, Wake-on-LAN, zamknúť/uspať/reštartovať/vypnúť; len doma na WiFi). Nový program `pc/` (Domov PC pre Windows, `domov-pc.exe` v Releases) a obrazovky v appke (`PcRemoteActivity`, `PcUi`, jadro `pc/*.java`). Pozri časť 24 a `pc/PROTOCOL.md`.
