@@ -323,6 +323,14 @@ fun HelpScreen(onBack: () -> Unit, onGuide: () -> Unit) {
                 "• Skupiny: podrž dlaždicu – posunieš ju v poradí alebo ju presunieš do vlastnej skupiny (napr. miestnosti).",
         )
         HelpSection(
+            "Ovládanie PC",
+            "Nastavenia → Ovládanie PC. Na PC s Windowsom spusti program domov-pc.exe (z GitHubu, Releases), na jeho stránke klikni " +
+                "„Spárovať nový telefón“ a v appke naskenuj QR kód. Potom uvidíš obraz PC a ovládaš ho: jeden prst = myš, ťuknutie = klik, " +
+                "dva prsty = rolovanie, štipnutie = priblíženie. Navrchu je panel s tlačidlami pre klávesnicu, klávesy (Ctrl, Alt, šípky…), " +
+                "schránku a vypnutie či uspanie PC. Funguje len doma na rovnakej WiFi. Zamknutú obrazovku Windowsu z telefónu ovládať nejde, " +
+                "odomkni PC na ňom. Zapnúť PC cez Wake-on-LAN sa dá, ak je pripojený káblom a má to zapnuté v BIOSe.",
+        )
+        HelpSection(
             "Widgety na plochu",
             "Podrž prst na ploche → Widgety → Domov. Widget zapína a vypína hlavný vypínač jedného zariadenia. Nedávaj naň " +
                 "ohrievač – widget nevie zobraziť potvrdenie.",

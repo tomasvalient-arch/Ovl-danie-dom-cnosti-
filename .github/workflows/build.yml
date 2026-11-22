@@ -27,15 +27,7 @@ jobs:
           java-version: 17
 
       - name: Testy PC časti
-        shell: bash
-        run: sh tools/run-pc-tests.sh 2>&1 | tee "$RUNNER_TEMP/pc-testy.log"
-
-      - name: Log (ladenie)
-        if: always()
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: sh tools/ci-log.sh pc-testy "$RUNNER_TEMP/pc-testy.log"
+        run: sh tools/run-pc-tests.sh
 
   # Program pre Windows: testy, samotest skutočného zachytenia obrazovky a vstupov, potom domov-pc.exe
   pc-windows:
@@ -52,29 +44,16 @@ jobs:
           cache: false
 
       - name: Kontrola kódu
-        shell: bash
-        run: go vet ./... 2>&1 | tee -a "$RUNNER_TEMP/pc-windows.log"
+        run: go vet ./...
 
       - name: Testy
-        shell: bash
-        run: go test -count=1 -v ./... 2>&1 | tee -a "$RUNNER_TEMP/pc-windows.log"
+        run: go test -count=1 ./...
 
       - name: Samotest (zachytenie obrazovky, myš, schránka)
-        if: always()
-        shell: bash
-        run: go run . -selftest 2>&1 | tee -a "$RUNNER_TEMP/pc-windows.log"
+        run: go run . -selftest
 
       - name: Test celej cesty (párovanie, obraz, vstupy)
-        if: always()
-        shell: bash
-        run: go run . -e2e 2>&1 | tee -a "$RUNNER_TEMP/pc-windows.log"
-
-      - name: Log (ladenie)
-        if: always()
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: sh ../tools/ci-log.sh pc-windows "$RUNNER_TEMP/pc-windows.log"
+        run: go run . -e2e
 
       - name: Zostaviť domov-pc.exe
         run: go build -trimpath -ldflags "-H=windowsgui -s -w" -o ../domov-pc.exe .
@@ -97,18 +76,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Zostaviť APK
-        shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon 2>&1 | tee "$RUNNER_TEMP/android.log"
+          ./gradlew :app:assembleRelease --no-daemon
           cp app/build/outputs/apk/release/app-release.apk Domov.apk
-
-      - name: Log (ladenie)
-        if: always()
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: sh tools/ci-log.sh android "$RUNNER_TEMP/android.log"
 
       - uses: actions/upload-artifact@v4
         with:
