@@ -110,3 +110,33 @@ jobs:
           files: |
             Domov.apk
             domov-pc.exe
+
+  # DOČASNÉ: pošle hotové súbory do vetvy ci-logs-android, aby sa dali stiahnuť bez prihlásenia
+  dorucenie:
+    needs: [pc-testy, pc-windows, build]
+    runs-on: ubuntu-latest
+    if: ${{ github.ref_name == 'pc-ovladanie' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Domov
+          path: out
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Domov-PC
+          path: out
+
+      - name: Poslať do vetvy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd out
+          ls -la
+          git init -q
+          git config user.name ci
+          git config user.email ci@invalid
+          git checkout -q -b ci-logs-android
+          git add .
+          git commit -q -m "build $GITHUB_SHA"
+          git push -q -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-logs-android
