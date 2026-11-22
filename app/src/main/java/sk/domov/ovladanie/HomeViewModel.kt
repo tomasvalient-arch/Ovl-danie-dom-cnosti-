@@ -469,6 +469,15 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
         return res.recoverCatching { throw java.io.IOException(DeviceClient.describe(it)) }
     }
 
+    /** Brána: surové odpovede na dotaz na podzariadenia (diagnostika). Chyba po slovensky. */
+    suspend fun gatewayInfo(device: Device): Result<List<String>> {
+        if (_demo.value) return Result.success(emptyList())
+        val network = _wifi.value ?: return Result.failure(java.io.IOException("Telefón nie je na WiFi"))
+        val res = withContext(Dispatchers.IO) { runCatching { DeviceClient.gatewayInfo(network, device) } }
+        return res.map { list -> list.map { TechInfo.redact(it, device) } }
+            .recoverCatching { throw java.io.IOException(DeviceClient.describe(it)) }
+    }
+
     /** Model vecí a posledné hodnoty z Tuya cloudu; null = cloud nie je nastavený. */
     suspend fun techCloud(device: Device): CloudTech? {
         val config = _cloud.value ?: return null
@@ -728,7 +737,7 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
                     } else {
                         val local = list.count { !it.sub }
                         CloudTest.Done(true, "Pripojenie funguje. V účte je ${list.size} zariadení" +
-                            (if (local < list.size) " (z toho ${list.size - local} cez bránu, tie appka neovláda)." else "."))
+                            (if (local < list.size) " (z toho ${list.size - local} cez bránu – Zigbee zariadenia appka ovláda cez bránu v domácej sieti)." else "."))
                     }
                 },
                 onFailure = { CloudTest.Done(false, CloudParse.describe(it)) },
@@ -780,7 +789,9 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
         val updated: List<String> = emptyList(),
         /** Zariadenia z účtu, ktoré v appke chýbajú (len tie, ktoré sa dajú ovládať lokálne). */
         val missing: List<CloudDevice> = emptyList(),
-        /** Zariadenia cez bránu (Zigbee/Bluetooth), ktoré appka neovláda. */
+        /** Zariadenia cez bránu (Zigbee), ktoré v appke chýbajú a vieme, cez ktorú bránu sa ovládajú. */
+        val zigbee: List<CloudDevice> = emptyList(),
+        /** Zariadenia cez bránu, pri ktorých sa nepodarilo zistiť bránu alebo ich ID (appka ich nevie pridať). */
         val subCount: Int = 0,
         val done: Boolean = false,
     )
@@ -791,6 +802,8 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
     /** Popisy hodnôt a IP z poslednej synchronizácie (na pridanie chýbajúcich zariadení). */
     private val syncMappings = HashMap<String, Map<String, DpSchema>>()
     private val syncFound = HashMap<String, FoundDevice>()
+    /** Celý zoznam zariadení z poslednej synchronizácie (na dohľadanie brány pri pridaní Zigbee zariadenia). */
+    @Volatile private var syncCloudList: List<CloudDevice> = emptyList()
 
     /**
      * Synchronizácia s Tuya cloudom: aktualizuje local keys a popisy existujúcich zariadení (bez straty vlastných
@@ -825,6 +838,11 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
                     usable.filter { it.id in mine || it.localKey.length == 16 }.forEach { c ->
                         client.mapping(c)?.let { syncMappings[c.id] = Schema.parseMapping(it) }
                     }
+                    // Zigbee podzariadenia: popis hodnôt sa potrebuje na rozpoznanie senzorov a prepočet hodnôt
+                    list.filter { it.sub && (it.id in mine || (it.parentId.isNotBlank() && it.cid.isNotBlank())) }.forEach { c ->
+                        client.mapping(c)?.let { syncMappings[c.id] = Schema.parseMapping(it) }
+                    }
+                    syncCloudList = list
                     list
                 }
             }
@@ -838,10 +856,12 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
                     refreshAll()
                 }
                 val mine = merged.map { it.devId }.toSet()
+                val zigbee = list.filter { it.sub && it.id !in mine && it.parentId.isNotBlank() && it.cid.isNotBlank() }
                 _sync.value = SyncState(
                     updated = changed,
                     missing = list.filter { !it.sub && it.id !in mine && it.localKey.length == 16 },
-                    subCount = list.count { it.sub && it.id !in mine },
+                    zigbee = zigbee,
+                    subCount = list.count { it.sub && it.id !in mine } - zigbee.size,
                     done = true,
                 )
             }.onFailure {
@@ -854,6 +874,30 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
     fun addFromSync(c: CloudDevice) {
         addOrUpdate(deviceFromCloud(c, syncMappings[c.id] ?: emptyMap(), syncFound[c.id]))
         _sync.value = _sync.value.copy(missing = _sync.value.missing.filterNot { it.id == c.id })
+    }
+
+    /**
+     * Pridá Zigbee zariadenie z poslednej synchronizácie. Ak v appke ešte nie je jeho brána, pridá sa spolu s ním
+     * (potrebuje ju na komunikáciu). Vráti text upozornenia, ak sa niečo nepodarilo (napr. brána nemá local key).
+     */
+    fun addZigbeeFromSync(c: CloudDevice): String? {
+        val gwId = c.parentId
+        if (gwId.isBlank() || c.cid.isBlank()) return "Pri zariadení „${c.name}“ sa nepodarilo zistiť bránu."
+        var warning: String? = null
+        if (_devices.value.none { it.devId == gwId }) {
+            val gw = syncCloudList.firstOrNull { it.id == gwId }
+            if (gw == null || gw.localKey.length != 16) {
+                warning = "Bránu zariadenia „${c.name}“ sa nepodarilo načítať z cloudu (chýba local key). Pridaj ju v zozname chýbajúcich zariadení."
+            } else {
+                addOrUpdate(deviceFromCloud(gw, syncMappings[gw.id] ?: emptyMap(), syncFound[gw.id]))
+            }
+        }
+        addOrUpdate(deviceFromCloudSub(c, syncMappings[c.id] ?: emptyMap(), gwId, c.cid))
+        _sync.value = _sync.value.copy(
+            zigbee = _sync.value.zigbee.filterNot { it.id == c.id },
+            missing = _sync.value.missing.filterNot { it.id == gwId },
+        )
+        return warning
     }
 
     /** IP adresa zariadenia z posledného hľadania v sieti (na zobrazenie v zozname chýbajúcich). */

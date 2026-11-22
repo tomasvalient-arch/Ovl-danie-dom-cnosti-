@@ -73,6 +73,8 @@ import kotlin.math.roundToInt
 
 /** Ikona podľa druhu zariadenia (Material Symbols). */
 internal fun kindIcon(d: Device, values: Map<String, Any>, on: Boolean): ImageVector {
+    if (Gateways.isGateway(d)) return Sym.devicesOther
+    Sensors.kind(d)?.let { return sensorIcon(it) }
     if (Fryer.detect(values) != null) return if (on) Sym.skilletFill else Sym.skillet
     return when (val t = if (Light.detect(values) == null) Templates.detect(values, d.schema, d.category) else null) {
         is ClimateTemplate -> when (t.kind) {
@@ -94,6 +96,17 @@ internal fun kindIcon(d: Device, values: Map<String, Any>, on: Boolean): ImageVe
             else -> Sym.devicesOther
         }
     }
+}
+
+/** Ikona senzora podľa druhu (z ikon, ktoré appka má). */
+internal fun sensorIcon(kind: SensorKind): ImageVector = when (kind) {
+    SensorKind.DOOR -> Sym.doorOpen
+    SensorKind.MOTION -> Sym.airwave
+    SensorKind.CLIMATE -> Sym.deviceThermostat
+    SensorKind.LEAK -> Sym.waterDrop
+    SensorKind.SMOKE, SensorKind.CO -> Sym.warning
+    SensorKind.GAS -> Sym.air
+    SensorKind.BUTTON -> Sym.power
 }
 
 /** Hlavná obrazovka: hlavička, stav automatiky, rýchle akcie a dlaždice v skupinách. */
@@ -501,8 +514,9 @@ private fun Tile(
     val stale = !wifiOn && values != null
     val power = if (values != null) powerDpOf(device, values) else null
     val multi = values?.let { LightChannels.detect(device, it) }
-    // svetlo s podhľadom: dlaždica svieti, keď svieti hociktorý zdroj
-    val on = if (multi != null) LightChannels.anyOn(multi, values) else power != null && values?.get(power) == true
+    val sensor = if (values != null) Sensors.read(device, values) else null
+    // senzor svieti, keď hlási poplach (otvorené dvere, pohyb, únik); svetlo s podhľadom, keď svieti hociktorý zdroj
+    val on = if (sensor != null) sensor.alarm else if (multi != null) LightChannels.anyOn(multi, values) else power != null && values?.get(power) == true
     val offline = state is DeviceState.Error && !stale
     // jas svetla ako pásik v dlaždici (len keď svieti a nie je to svetlo s podhľadom)
     val lightSpec = if (values != null && multi == null) Light.detect(values) else null
@@ -621,6 +635,7 @@ private fun lastKnownText(device: Device, values: Map<String, Any>, hasPower: Bo
 
 /** Krátky stav na dlaždicu (napr. „Zapnuté · 80 %“, „118,7 W“). */
 private fun tileStatus(device: Device, state: DeviceState): String {
+    if (state is DeviceState.Online) Sensors.read(device, state.values)?.let { return Sensors.tileText(it) }
     val text = statusText(device, state)
     return text.replace("Biela ", "").replace(" · teplota ", " · ")
 }
@@ -798,6 +813,8 @@ private fun kindLabel(k: AutoKind) = when (k) {
     AutoKind.HEATER -> "ohrievač"
     AutoKind.THERMOSTAT -> "termostat"
     AutoKind.COVER -> "rolety"
+    AutoKind.SENSOR -> "senzor"
+    AutoKind.GATEWAY -> "brána"
     AutoKind.OTHER -> "zariadenie"
     AutoKind.UNKNOWN -> "neznáme zariadenie"
 }

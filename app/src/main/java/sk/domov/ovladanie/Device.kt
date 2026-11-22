@@ -35,7 +35,14 @@ data class Device(
     val model: String = "",
     /** Ručné nastavenie kanálov svetla (LightChannels.ROLE_*): napr. model=mix, mix=51, back_switch=33. */
     val lightRoles: Map<String, String> = emptyMap(),
-)
+    /** Zigbee / Bluetooth podzariadenie: Device ID brány v appke, cez ktorú sa ovláda. Prázdne = samostatné zariadenie. */
+    val gatewayId: String = "",
+    /** ID podzariadenia za bránou (node_id z Tuya cloudu). Prázdne = samostatné zariadenie. */
+    val cid: String = "",
+) {
+    /** Podzariadenie za bránou: nemá vlastnú IP ani local key, komunikuje cez bránu (pozri Gateways). */
+    val isSub: Boolean get() = gatewayId.isNotBlank() && cid.isNotBlank()
+}
 
 internal fun rolesToJson(roles: Map<String, String>): JSONObject = JSONObject().apply { roles.forEach { (k, v) -> put(k, v) } }
 
@@ -81,7 +88,7 @@ class DeviceStore(context: Context) {
     fun load(): List<Device> {
         val raw = prefs.getString("devices", null) ?: return emptyList()
         return try {
-            DeviceList.parseStored(raw)
+            DeviceList.parseStored(raw).also { Gateways.update(it) }
         } catch (e: Exception) {
             // nečitateľné dáta nezahodíme: odložia sa, aby ich ďalšie uloženie neprepísalo bez stopy
             prefs.edit().putString("devices_backup", raw).apply()
@@ -111,11 +118,13 @@ class DeviceStore(context: Context) {
                     .put("group", d.group)
                     .put("productId", d.productId)
                     .put("model", d.model)
+                    .apply { if (d.isSub) put("gatewayId", d.gatewayId).put("cid", d.cid) }
                     .apply { if (d.lightRoles.isNotEmpty()) put("lightRoles", rolesToJson(d.lightRoles)) }
                     .apply { if (d.schema.isNotEmpty()) put("mapping", Schema.toJson(d.schema)) }
             )
         }
         prefs.edit().putString("devices", arr.toString()).apply()
+        Gateways.update(devices)
     }
 }
 
@@ -124,6 +133,8 @@ class DeviceStore(context: Context) {
  * inak prvá hodnota typu zapnuté/vypnuté. Vráti null, ak zariadenie žiadnu takú nemá.
  */
 fun powerDpOf(device: Device, values: Map<String, Any>): String? {
+    // senzory (dvere, pohyb, teplota…) a brány vypínač nemajú; ich „zapnuté/vypnuté“ hodnota nesmie byť vypínač
+    if (Sensors.isSensor(device) || Gateways.isGateway(device)) return null
     if (device.powerDp.isNotBlank() && values[device.powerDp] is Boolean) return device.powerDp
     Light.detect(values)?.let { return it.power }
     // fritéza: hlavný vypínač je len hodnota 1; štart/stop (2) nesmie byť hlavný vypínač, inak by widget spúšťal ohrev
@@ -184,6 +195,7 @@ fun exportDevicesJson(devices: List<Device>, householdKey: String? = null): Stri
         if (d.productId.isNotBlank()) o.put("product_id", d.productId)
         if (d.model.isNotBlank()) o.put("product_name", d.model)
         if (d.lightRoles.isNotEmpty()) o.put("lightRoles", rolesToJson(d.lightRoles))
+        if (d.isSub) o.put("sub", true).put("parent", d.gatewayId).put("node_id", d.cid)
         if (d.schema.isNotEmpty()) o.put("mapping", Schema.toJson(d.schema))
         arr.put(o)
     }
@@ -204,14 +216,18 @@ fun parseTinytuyaJson(text: String): List<Device> {
         val o = arr.optJSONObject(i) ?: continue
         val id = o.optString("id")
         val key = o.optString("key")
-        if (id.isBlank() || key.length != 16) continue
+        // podzariadenie za bránou: parent (Device ID brány) a node_id (cid); vlastný local key nepotrebuje
+        val parent = o.optString("parent", o.optString("gatewayId", o.optString("gateway_id", ""))).trim()
+        val cid = o.optString("node_id", o.optString("cid", "")).trim()
+        val sub = parent.isNotEmpty() && cid.isNotEmpty() && cid.matches(Regex("[A-Za-z0-9_.:-]+"))
+        if (id.isBlank() || (!sub && key.length != 16)) continue
         // prázdna verzia = devices.json ju nemá; pri importe sa potom ponechá pôvodná (alebo 3.3 pri novom zariadení)
         val ver = o.optString("ver", o.optString("version", "")).trim()
         result += Device(
             name = o.optString("name", id).ifBlank { id },
             ip = o.optString("ip", ""),
             devId = id,
-            localKey = key,
+            localKey = if (sub) "" else key,
             version = if (ver in listOf("3.3", "3.4", "3.5")) ver else "",
             labels = readLabels(o),
             hidden = readHidden(o),
@@ -224,6 +240,8 @@ fun parseTinytuyaJson(text: String): List<Device> {
             productId = o.optString("product_id", o.optString("productId", "")).trim(),
             model = o.optString("product_name", o.optString("model", "")).trim(),
             lightRoles = rolesFromJson(o.optJSONObject("lightRoles")),
+            gatewayId = if (sub) parent else "",
+            cid = if (sub) cid else "",
         )
     }
     return result
@@ -243,7 +261,9 @@ fun mergeImported(current: List<Device>, imported: List<Device>): List<Device> {
         } else {
             list.map {
                 if (it.devId == new.devId) it.copy(
-                    localKey = new.localKey,
+                    localKey = if (new.isSub) it.localKey else new.localKey,
+                    gatewayId = if (new.isSub) new.gatewayId else it.gatewayId,
+                    cid = if (new.isSub) new.cid else it.cid,
                     version = new.version.ifBlank { it.version },
                     ip = new.ip.ifBlank { it.ip },
                     labels = if (new.labels.isNotEmpty()) new.labels else it.labels,
@@ -280,7 +300,10 @@ fun mergeCloud(
         val c = byId[d.devId] ?: return@map d
         val schema = mappings[d.devId]?.takeIf { it.isNotEmpty() } ?: d.schema
         val updated = d.copy(
-            localKey = c.localKey.takeIf { it.length == 16 } ?: d.localKey,
+            // podzariadenie komunikuje cez bránu (jej kľúč), vlastný local key sa nepoužíva
+            localKey = if (d.isSub) d.localKey else (c.localKey.takeIf { it.length == 16 } ?: d.localKey),
+            gatewayId = if (d.isSub && c.parentId.isNotBlank() && c.nodeId.isNotBlank()) c.parentId else d.gatewayId,
+            cid = if (d.isSub && c.parentId.isNotBlank() && c.nodeId.isNotBlank()) c.nodeId else d.cid,
             schema = schema,
             category = c.category.ifBlank { d.category },
             productId = c.productId.ifBlank { d.productId },
@@ -303,4 +326,22 @@ fun deviceFromCloud(c: CloudDevice, schema: Map<String, DpSchema>, found: FoundD
     category = c.category,
     productId = c.productId,
     model = c.productName,
+)
+
+/**
+ * Nové podzariadenie (Zigbee) z Tuya cloudu. Nemá IP ani local key, ovláda sa cez bránu [gateway] (jej Device ID).
+ * [cid] je ID podzariadenia za bránou (node_id).
+ */
+fun deviceFromCloudSub(c: CloudDevice, schema: Map<String, DpSchema>, gatewayDevId: String, cid: String): Device = Device(
+    name = c.name,
+    ip = "",
+    devId = c.id,
+    localKey = "",
+    version = "3.3",
+    schema = schema,
+    category = c.category,
+    productId = c.productId,
+    model = c.productName,
+    gatewayId = gatewayDevId,
+    cid = cid,
 )

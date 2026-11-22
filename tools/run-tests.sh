@@ -10,11 +10,13 @@ mkdir -p "$OUT" tools/libs
 [ -f "$JSON" ] || curl -sSL -o "$JSON" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar
 
 javac -d "$OUT/mock" $S/tuya/TuyaDevice.java tools/MockTest.java && java -cp "$OUT/mock" MockTest
+# brána (Zigbee podzariadenia cez cid): tvary požiadaviek, filtrovanie cudzích hlásení, regresia bez cid
+javac -d "$OUT/gateway" $S/tuya/TuyaDevice.java tools/GatewayProtocolTest.java && java -cp "$OUT/gateway" sk.domov.ovladanie.tuya.GatewayProtocolTest
 javac -d "$OUT/disc" $S/tuya/TuyaDiscovery.java tools/DiscoveryTest.java && java -cp "$OUT/disc" DiscoveryTest
 kotlinc $S/Light.kt tools/LightTest.kt -include-runtime -d "$OUT/light.jar" 2>/dev/null && java -jar "$OUT/light.jar"
 kotlinc $S/Fryer.kt tools/FryerTest.kt -include-runtime -d "$OUT/fryer.jar" 2>/dev/null && java -jar "$OUT/fryer.jar"
 javac -d "$OUT/stubs" tools/stubs/android/content/*.java
-PURE="$S/Schema.kt $S/Templates.kt $S/Device.kt $S/Light.kt $S/Fryer.kt $S/Found.kt $S/TuyaCloud.kt $S/Presence.kt $S/Sun.kt $S/Household.kt $S/Scenes.kt $S/DeviceList.kt $S/LightChannels.kt $S/Live.kt $S/SafeOff.kt $S/FryerWatch.kt $S/Backup.kt $S/Weather.kt $S/AppShare.kt $S/Http.kt"
+PURE="$S/Schema.kt $S/Templates.kt $S/Device.kt $S/Light.kt $S/Fryer.kt $S/Found.kt $S/TuyaCloud.kt $S/Presence.kt $S/Sun.kt $S/Household.kt $S/Scenes.kt $S/DeviceList.kt $S/LightChannels.kt $S/Live.kt $S/SafeOff.kt $S/FryerWatch.kt $S/Backup.kt $S/Weather.kt $S/AppShare.kt $S/Http.kt $S/Zigbee.kt"
 kotlinc -cp "$OUT/stubs:$JSON" $PURE tools/SchemaTest.kt -include-runtime -d "$OUT/schema.jar" 2>/dev/null
 java -cp "$OUT/schema.jar:$OUT/stubs:$JSON" SchemaTestKt
 kotlinc -cp "$OUT/stubs:$JSON" $PURE tools/CloudTest.kt -include-runtime -d "$OUT/cloud.jar" 2>/dev/null
@@ -68,4 +70,7 @@ java -cp "$OUT/shopping.jar:$JSON" ShoppingTestKt
 # udalosti a narodeniny
 kotlinc -cp "$JSON" $S/Events.kt $S/Meniny.kt tools/EventsTest.kt -include-runtime -d "$OUT/events.jar" 2>/dev/null
 java -cp "$OUT/events.jar:$JSON" EventsTestKt
+# Zigbee: smerovanie cez bránu, senzory, uloženie a import, zisťovanie brány z cloudu
+kotlinc -cp "$OUT/stubs:$JSON" $PURE tools/ZigbeeTest.kt -include-runtime -d "$OUT/zigbee.jar" 2>/dev/null
+java -cp "$OUT/zigbee.jar:$OUT/stubs:$JSON" ZigbeeTestKt
 echo "VŠETKY TESTY PREŠLI"

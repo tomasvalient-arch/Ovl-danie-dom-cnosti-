@@ -106,6 +106,8 @@ object DeviceList {
             productId = o.optString("productId", ""),
             model = o.optString("model", ""),
             lightRoles = rolesFromJson(o.optJSONObject("lightRoles")),
+            gatewayId = o.optString("gatewayId", "").trim(),
+            cid = o.optString("cid", "").trim(),
         )
     }
 

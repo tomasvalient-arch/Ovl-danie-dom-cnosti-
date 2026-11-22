@@ -29,7 +29,8 @@ object DeviceClient {
      * Ak zariadenie vôbec neodpovedá (timeout), neopakuje sa, aby užívateľ zbytočne nečakal.
      */
     private fun <T> exclusive(d: Device, block: () -> T): T {
-        val lock = locks.getOrPut(d.devId) { Any() }
+        // podzariadenia jednej brány idú po jednom (brána zvláda málo spojení naraz)
+        val lock = locks.getOrPut(Gateways.lockKey(d)) { Any() }
         synchronized(lock) {
             for (attempt in 1..3) {
                 try {
@@ -45,7 +46,9 @@ object DeviceClient {
 
     private fun client(network: Network, d: Device): TuyaDevice {
         // Sockety viažeme priamo na WiFi sieť, aby sa nepoužilo mobilné dáta ani keď WiFi nemá internet.
-        return TuyaDevice(d.ip, d.devId, d.localKey, d.version, network.socketFactory)
+        // Podzariadenie (Zigbee) ide cez bránu: pripojí sa k jej IP s jej kľúčom a v príkaze uvedie svoje cid.
+        val r = Gateways.route(d)
+        return TuyaDevice(r.ip, TuyaDevice.DEFAULT_PORT, r.devId, r.localKey, r.version, network.socketFactory, r.cid)
     }
 
     /** Načíta všetky hodnoty (DP) zariadenia, zoradené podľa čísla DP. */
@@ -60,8 +63,13 @@ object DeviceClient {
     private val hiddenMisses = ConcurrentHashMap<String, Int>()
 
     private fun readStateOnce(network: Network, d: Device): Map<String, Any> {
-        if (d.ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
-        val hidden = LightChannels.hiddenDps(d).mapNotNull { it.toIntOrNull() }
+        if (Gateways.route(d).ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
+        if (Gateways.isGateway(d)) {
+            // brána nemá vlastné hodnoty: stačí, že sa s ňou dá spojiť a odpovie (zoznam jej podzariadení)
+            client(network, d).subdevQuery(1200)
+            return emptyMap()
+        }
+        val hidden = if (d.isSub) emptyList<Int>() else LightChannels.hiddenDps(d).mapNotNull { it.toIntOrNull() }
         if (hidden.isNotEmpty() && (hiddenMisses[d.devId] ?: 0) < 3) {
             // skryté DP (napr. 51 mix_rgbcw) zariadenie v bežnom stave neposiela – vyžiadame ich v tom istom spojení
             val texts = client(network, d).queryWithExtra(arrayOf(hidden.toIntArray()), 900, true)
@@ -77,11 +85,11 @@ object DeviceClient {
         val json = try {
             JSONObject(text)
         } catch (e: Exception) {
-            throw IOException("Neočakávaná odpoveď zariadenia: $text")
+            throw IOException(unexpected(d, text))
         }
         val dps = json.optJSONObject("dps")
             ?: json.optJSONObject("data")?.optJSONObject("dps")
-            ?: throw IOException("Neočakávaná odpoveď zariadenia: $text")
+            ?: throw IOException(unexpected(d, text))
         val out = HashMap<String, Any>()
         for (key in dps.keys()) {
             val v = dps.get(key)
@@ -90,12 +98,26 @@ object DeviceClient {
         return out.toSortedMap(compareBy<String>({ it.toIntOrNull() ?: Int.MAX_VALUE }, { it }))
     }
 
+    /** Text chyby pri odpovedi bez hodnôt; podzariadenie za bránou býva offline, vybité alebo mimo dosahu. */
+    private fun unexpected(d: Device, text: String): String =
+        if (d.isSub) "Brána neposlala hodnoty podzariadenia (býva vybité, mimo dosahu alebo offline): ${text.take(160)}"
+        else "Neočakávaná odpoveď zariadenia: $text"
+
+    /**
+     * Brána: surové odpovede na dotaz na podzariadenia (zoznam online/offline). Na technické info a ladenie;
+     * vráti texty odpovedí (môže byť prázdny zoznam, ak brána mlčí).
+     */
+    fun gatewayInfo(network: Network, d: Device): List<String> = exclusive(d) {
+        if (Gateways.route(d).ip.isBlank()) throw IOException("Brána nemá nastavenú IP adresu")
+        client(network, d).subdevQuery(1500)
+    }
+
     /**
      * Technické info: stav a potom vyžiada všetky DP 1–255 (UPDATEDPS po skupinách). Vráti všetko, čo zariadenie
      * poslalo, aj DP mimo popisu z cloudu.
      */
     fun probeAll(network: Network, d: Device): Map<String, Any> = exclusive(d) {
-        if (d.ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
+        if (Gateways.route(d).ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
         val groups = LocalDps.PROBE_GROUPS.map { it.toIntArray() }.toTypedArray()
         LocalDps.merge(client(network, d).queryWithExtra(groups, 1200, false))
     }
@@ -106,11 +128,11 @@ object DeviceClient {
      */
     fun monitor(network: Network, d: Device, durationMs: Long, cancelled: () -> Boolean, onDps: (Map<String, Any>) -> Unit, onInfo: (String) -> Unit) {
         try {
-            if (d.ip.isBlank()) {
+            if (Gateways.route(d).ip.isBlank()) {
                 onInfo("Zariadenie nemá nastavenú IP adresu")
                 return
             }
-            val extra = LightChannels.hiddenDps(d).mapNotNull { it.toIntOrNull() }.toIntArray()
+            val extra = if (d.isSub) IntArray(0) else LightChannels.hiddenDps(d).mapNotNull { it.toIntOrNull() }.toIntArray()
             client(network, d).monitor(extra, durationMs, object : TuyaDevice.MonitorListener {
                 override fun onFrame(cmd: Int, retcode: Int, text: String) {
                     runCatching {
@@ -192,10 +214,15 @@ object DeviceClient {
      */
     fun liveSend(network: Network, d: Device, values: Map<String, Any>) {
         if (values.isEmpty()) return
-        if (d.ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
+        if (Gateways.route(d).ip.isBlank()) throw IOException("Zariadenie nemá nastavenú IP adresu")
         val json = JSONObject()
         for ((k, v) in values) json.put(k, v)
         CommandLog.addThrottled(d.devId, "live", "→ $json  [posuvník]", 1000)
+        if (d.isSub) {
+            // cez bránu bez trvalého spojenia: každé spojenie je krátke a po jednom (zámok brány)
+            exclusive(d) { client(network, d).setDps(json.toString()) }
+            return
+        }
         val lock = locks.getOrPut(d.devId) { Any() }
         synchronized(lock) {
             try {

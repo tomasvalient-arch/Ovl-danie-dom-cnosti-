@@ -275,7 +275,7 @@ object Darkness {
 // ------------------------------------------------------------------ zariadenia
 
 /** Druh zariadenia z pohľadu automatiky. */
-enum class AutoKind { LIGHT, SOCKET, FAN, FRYER, HEATER, THERMOSTAT, COVER, OTHER, UNKNOWN }
+enum class AutoKind { LIGHT, SOCKET, FAN, FRYER, HEATER, THERMOSTAT, COVER, SENSOR, GATEWAY, OTHER, UNKNOWN }
 
 object AutoDevices {
     private val SWITCH_N = Regex("switch_\\d+")
@@ -290,6 +290,9 @@ object AutoDevices {
     fun hotCategory(category: String): Boolean = category.trim().lowercase() in HOT_CATEGORIES
 
     fun kind(d: Device, values: Map<String, Any>): AutoKind {
+        // brána a senzory sa len zobrazujú; nikdy sa nevypínajú ani nezapínajú automatikou
+        if (Gateways.isGateway(d)) return AutoKind.GATEWAY
+        if (Sensors.isSensor(d)) return AutoKind.SENSOR
         // fritéza aj podľa názvu/modelu (vypnutá nemusí poslať všetky hodnoty)
         if (SafeOff.looksLikeFryer(d, values)) return AutoKind.FRYER
         val cat = d.category.lowercase()
@@ -317,7 +320,7 @@ object AutoDevices {
     fun canArrive(kind: AutoKind): Boolean = kind == AutoKind.LIGHT || kind == AutoKind.SOCKET || kind == AutoKind.FAN || kind == AutoKind.OTHER
 
     /** Dá sa zariadenie vypínať pri odchode (má vypínač)? */
-    fun canDepart(kind: AutoKind): Boolean = kind != AutoKind.COVER
+    fun canDepart(kind: AutoKind): Boolean = kind != AutoKind.COVER && kind != AutoKind.SENSOR && kind != AutoKind.GATEWAY
 
     /** Predvolene sa pri odchode vypínajú všetky svetlá a zásuvky. */
     fun defaultDepart(kind: AutoKind): Boolean = kind == AutoKind.LIGHT || kind == AutoKind.SOCKET

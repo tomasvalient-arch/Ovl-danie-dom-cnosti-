@@ -381,6 +381,7 @@ fun HelpScreen(onBack: () -> Unit, onGuide: () -> Unit) {
 @Composable
 fun SyncDialog(vm: HomeViewModel, onDismiss: () -> Unit) {
     val sync by vm.sync.collectAsState()
+    var zigbeeWarning by remember { mutableStateOf<String?>(null) }
     DomovAlert(
         onDismissRequest = onDismiss,
         icon = { Icon(Sym.sync, null) },
@@ -418,9 +419,34 @@ fun SyncDialog(vm: HomeViewModel, onDismiss: () -> Unit) {
                     } else {
                         Text("Všetky zariadenia z účtu už v appke sú.", style = MaterialTheme.typography.bodySmall)
                     }
+                    if (sync.zigbee.isNotEmpty()) {
+                        Text("Zigbee zariadenia (cez bránu):", style = MaterialTheme.typography.titleSmall)
+                        sync.zigbee.forEach { c ->
+                            DialogCard {
+                                Text(c.name, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                                Text(
+                                    c.productName.ifBlank { c.category }.ifBlank { "Zigbee zariadenie" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Button(onClick = { zigbeeWarning = vm.addZigbeeFromSync(c) }) { Text("Pridať") }
+                            }
+                        }
+                        if (sync.zigbee.size > 1) {
+                            OutlinedButton(onClick = { zigbeeWarning = sync.zigbee.mapNotNull { vm.addZigbeeFromSync(it) }.firstOrNull() }) {
+                                Text("Pridať všetky Zigbee")
+                            }
+                        }
+                        zigbeeWarning?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                        Text(
+                            "Zigbee zariadenia sa ovládajú lokálne cez bránu, ktorá musí byť v domácej sieti. Senzory (dvere, pohyb, " +
+                                "teplota) appka zobrazuje; upozornenia pri zmene prídu v ďalšej verzii.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (sync.subCount > 0) {
                         Text(
-                            "${sync.subCount} zariadení je pripojených cez bránu (Zigbee/Bluetooth), tie appka lokálne neovláda.",
+                            "${sync.subCount} zariadení cez bránu appka nevie pridať (nepodarilo sa zistiť bránu alebo ID zariadenia v cloude).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

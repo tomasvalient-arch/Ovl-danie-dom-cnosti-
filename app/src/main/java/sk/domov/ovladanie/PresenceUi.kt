@@ -141,6 +141,8 @@ private fun kindTitle(k: AutoKind): String = when (k) {
     AutoKind.HEATER -> "ohrievač"
     AutoKind.THERMOSTAT -> "termostat"
     AutoKind.COVER -> "rolety"
+    AutoKind.SENSOR -> "senzor"
+    AutoKind.GATEWAY -> "brána"
     AutoKind.OTHER -> "iné"
     AutoKind.UNKNOWN -> "neznámy typ"
 }

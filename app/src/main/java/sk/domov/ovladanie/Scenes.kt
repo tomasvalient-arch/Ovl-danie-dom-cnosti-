@@ -11,15 +11,17 @@ object Groups {
     const val LIGHTS = "Svetlá"
     const val SOCKETS = "Zásuvky"
     const val APPLIANCES = "Spotrebiče"
+    const val SENSORS = "Senzory"
     const val OTHER = "Ostatné"
 
     /** Automatické skupiny v poradí, v akom sa zobrazujú. */
-    val AUTO = listOf(LIGHTS, SOCKETS, APPLIANCES, OTHER)
+    val AUTO = listOf(LIGHTS, SOCKETS, APPLIANCES, SENSORS, OTHER)
 
     fun autoGroup(kind: AutoKind): String = when (kind) {
         AutoKind.LIGHT -> LIGHTS
         AutoKind.SOCKET -> SOCKETS
         AutoKind.FAN, AutoKind.FRYER, AutoKind.HEATER, AutoKind.THERMOSTAT -> APPLIANCES
+        AutoKind.SENSOR, AutoKind.GATEWAY -> SENSORS
         AutoKind.COVER, AutoKind.OTHER, AutoKind.UNKNOWN -> OTHER
     }
 

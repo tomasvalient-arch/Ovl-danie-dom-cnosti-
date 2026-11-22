@@ -48,7 +48,7 @@ object SafeOff {
         if (looksLikeFryer(d, values)) return true
         if (AutoDevices.hotCategory(d.category)) return true
         return when (AutoDevices.kind(d, values)) {
-            AutoKind.LIGHT, AutoKind.SOCKET, AutoKind.COVER -> false
+            AutoKind.LIGHT, AutoKind.SOCKET, AutoKind.COVER, AutoKind.SENSOR, AutoKind.GATEWAY -> false
             else -> true
         }
     }

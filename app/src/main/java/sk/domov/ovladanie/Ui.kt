@@ -363,11 +363,20 @@ internal fun NoticeBanner(message: String, onDismiss: () -> Unit) {
 internal fun deviceValues(d: Device, states: Map<String, DeviceState>, known: Map<String, Map<String, Any>>): Map<String, Any> =
     (states[d.id] as? DeviceState.Online)?.values ?: known[d.id] ?: emptyMap()
 
+/** Stav brány („Brána · 3 zariadenia“) alebo senzora („Zatvorené · Batéria 87 %“); pre iné zariadenia null. */
+internal fun zigbeeStatusText(device: Device, values: Map<String, Any>): String? {
+    if (Gateways.isGateway(device)) {
+        val n = Gateways.childCount(device)
+        return "Brána · " + if (n == 0) "žiadne zariadenia v appke" else Scenes.devicesText(n)
+    }
+    return Sensors.read(device, values)?.let { Sensors.summary(it) }
+}
+
 /** Krátky popis stavu zariadenia, napr. "Zapnuté · Biela 80 %". */
 internal fun statusText(device: Device, state: DeviceState): String = when (state) {
     is DeviceState.Loading -> "Pripájam sa…"
     is DeviceState.Error -> "Nedostupné – ťukni pre podrobnosti"
-    is DeviceState.Online -> LightChannels.detect(device, state.values)?.let { LightChannels.summary(it, state.values) } ?: run {
+    is DeviceState.Online -> zigbeeStatusText(device, state.values) ?: LightChannels.detect(device, state.values)?.let { LightChannels.summary(it, state.values) } ?: run {
         val spec = Light.detect(state.values, device.schema)
         val fryer = Fryer.detect(state.values)
         val power = powerDpOf(device, state.values)
@@ -448,7 +457,9 @@ internal fun DeviceDialog(
     var hidden by remember { mutableStateOf(device?.hidden ?: emptySet()) }
     var hiddenText by remember { mutableStateOf(device?.hidden?.joinToString(", ") ?: "") }
 
-    val techValid = ip.isNotBlank() && devId.isNotBlank() && key.trim().length == 16
+    // Zigbee podzariadenie nemá vlastnú IP ani kľúč: komunikuje cez bránu
+    val isSubDev = device?.isSub == true
+    val techValid = if (isSubDev) devId.isNotBlank() else ip.isNotBlank() && devId.isNotBlank() && key.trim().length == 16
     val valid = name.isNotBlank() && techValid
     // technické údaje sú zbalené; rozbalia sa samé, keď ich treba doplniť (ručné pridanie)
     var advanced by remember { mutableStateOf(!techValid) }
@@ -565,30 +576,41 @@ internal fun DeviceDialog(
                             }
                         }
                     }
-                    DomovTextField(
-                        value = ip, onValueChange = { ip = it },
-                        label = { Text("IP adresa") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                        supportingText = { Text("Adresa zariadenia v domácej WiFi, napr. 192.168.1.50. Keď sa zmení, appka ju väčšinou opraví sama.") },
-                    )
+                    if (isSubDev) {
+                        Text(
+                            "Zigbee zariadenie: ovláda sa cez bránu v domácej sieti, preto nemá vlastnú IP adresu ani local key. " +
+                                "Adresu a kľúč brány upravíš v nastaveniach brány.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        DomovTextField(
+                            value = ip, onValueChange = { ip = it },
+                            label = { Text("IP adresa") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            supportingText = { Text("Adresa zariadenia v domácej WiFi, napr. 192.168.1.50. Keď sa zmení, appka ju väčšinou opraví sama.") },
+                        )
+                    }
                     DomovTextField(
                         value = devId, onValueChange = { devId = it },
                         label = { Text("Device ID") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         supportingText = { Text("Jedinečné označenie zariadenia v Tuya (z Tuya cloudu alebo hľadania v sieti).") },
                     )
-                    DomovTextField(
-                        value = key, onValueChange = { key = it },
-                        label = { Text("Local key (16 znakov)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                        isError = key.isNotBlank() && key.trim().length != 16,
-                        supportingText = { Text("Tajný kľúč na šifrované ovládanie cez WiFi. Mení sa len po novom spárovaní v Tuya appke.") },
-                    )
-                    Text("Verzia protokolu", style = MaterialTheme.typography.labelMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("3.3", "3.4", "3.5").forEach { v ->
-                            FilterChip(selected = version == v, onClick = { version = v }, label = { Text(v) })
+                    if (!isSubDev) {
+                        DomovTextField(
+                            value = key, onValueChange = { key = it },
+                            label = { Text("Local key (16 znakov)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            isError = key.isNotBlank() && key.trim().length != 16,
+                            supportingText = { Text("Tajný kľúč na šifrované ovládanie cez WiFi. Mení sa len po novom spárovaní v Tuya appke.") },
+                        )
+                        Text("Verzia protokolu", style = MaterialTheme.typography.labelMedium)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("3.3", "3.4", "3.5").forEach { v ->
+                                FilterChip(selected = version == v, onClick = { version = v }, label = { Text(v) })
+                            }
                         }
+                        Text("Spôsob šifrovania, ktorý zariadenie používa. Ak zariadenie neodpovedá, skús inú verziu.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("Spôsob šifrovania, ktorý zariadenie používa. Ak zariadenie neodpovedá, skús inú verziu.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     // hlavný vypínač: výber z hodnôt s ľudskými názvami
                     Text("Hlavný vypínač", style = MaterialTheme.typography.labelMedium)

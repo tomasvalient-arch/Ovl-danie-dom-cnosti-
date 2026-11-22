@@ -75,8 +75,10 @@ class DomovWidgetProvider : AppWidgetProvider() {
             val on = !failed && power != null && values?.get(power) == true
             val isLight = values != null && Light.isLight(values)
 
+            val sensor = if (device != null && values != null) Sensors.read(device, values) else null
             val text = status ?: when {
                 device == null -> "Chýba"
+                sensor != null -> sensor.title.ifEmpty { "Ťukni" }
                 values == null || power == null -> "Ťukni"
                 on -> "Zapnuté"
                 else -> "Vypnuté"

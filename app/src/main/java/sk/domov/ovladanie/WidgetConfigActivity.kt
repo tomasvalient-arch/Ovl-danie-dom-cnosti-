@@ -82,7 +82,7 @@ private fun WidgetPicker(devices: List<Device>, onPick: (Device) -> Unit) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(device.name, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            device.ip,
+                            if (device.isSub) "Zigbee (cez bránu)" else device.ip,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

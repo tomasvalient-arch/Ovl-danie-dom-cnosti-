@@ -50,6 +50,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.text.font.FontFamily
 import androidx.lifecycle.repeatOnLifecycle
 
 /** Obnova stavu otvoreného zariadenia (predtým 4 s). */
@@ -217,6 +220,8 @@ private fun handledDps(spec: LightSpec?, dual: DualSpec?, fryer: FryerSpec?, tem
 
 /** Popis druhu zariadenia pod názvom, napr. „Svetlo“, „Zásuvka s meraním“. */
 internal fun deviceKindTitle(device: Device, values: Map<String, Any>): String {
+    if (Gateways.isGateway(device)) return "Brána"
+    Sensors.kind(device)?.let { return it.title }
     LightChannels.detect(device, values)?.let { ml -> return if (ml.channels.size == 2) "Svetlo s dvoma zdrojmi" else "Svetlo s ${ml.channels.size} zdrojmi" }
     if (Light.detect(values) != null) return "Svetlo"
     if (Light.detectDual(values, device.whiteSwitchDp, device.colourSwitchDp) != null) return "Svetlo s dvoma zdrojmi"
@@ -285,7 +290,12 @@ private fun DeviceContentInner(device: Device, values: Map<String, Any>, wifiOn:
         if (warning != null) pending = warning to cmd else vm.setValues(device, cmd)
     }
 
+    val sensor = Sensors.read(device, values)
+    val gateway = Gateways.isGateway(device)
+
     when {
+        gateway -> GatewayCard(device, vm, wifiOn)
+        sensor != null -> SensorCard(sensor)
         multi != null -> MultiLightOrb(multi, values, enabled = wifiOn) { vm.setValues(device, it) }
         spec != null -> LightOrbFor(spec, values, enabled = wifiOn) { vm.setValues(device, it) }
         dual != null && power != null -> {
@@ -455,12 +465,13 @@ private fun DeviceContentInner(device: Device, values: Map<String, Any>, wifiOn:
                         enabled = wifiOn,
                         schema = schema,
                         caption = if (schema != null) "č. $dp · ${schema.code}" else "č. $dp",
+                        forceReadOnly = sensor != null,
                         onSet = { send(mapOf(dp to it)) },
                         onRename = { name ->
                             vm.addOrUpdate(device.copy(labels = device.labels + (dp to name)), reload = false)
                         },
                         onHide = { vm.addOrUpdate(device.copy(hidden = device.hidden + dp), reload = false) },
-                        onMakePower = if (value is Boolean) {
+                        onMakePower = if (value is Boolean && sensor == null) {
                             { vm.addOrUpdate(device.copy(powerDp = dp), reload = false) }
                         } else {
                             null
@@ -493,7 +504,7 @@ private fun DeviceContentInner(device: Device, values: Map<String, Any>, wifiOn:
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    } else if (!hasControls && power == null) {
+    } else if (!hasControls && power == null && sensor == null && !gateway) {
         Text(
             text = "Zariadenie nevrátilo žiadne hodnoty na zobrazenie.",
             style = MaterialTheme.typography.bodySmall,
@@ -602,6 +613,105 @@ private fun PowerCard(icon: androidx.compose.ui.graphics.vector.ImageVector, on:
     }
 }
 
+/** Veľká karta senzora: hlavná hodnota (Zatvorené, Pohyb, 21,4 °C), batéria a upozornenia. Nič sa nedá ovládať. */
+@Composable
+private fun SensorCard(r: SensorReading) {
+    val c = Domov.colors
+    val on = r.alarm
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = if (on) Color.Transparent else c.tileOff,
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (on) c.tileOnBorder else c.tileOffBorder),
+    ) {
+        Column(
+            modifier = Modifier.then(if (on) Modifier.background(c.tileOn) else Modifier).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconCircle(sensorIcon(r.kind), on = on, size = 64.dp)
+                Spacer(Modifier.size(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (r.known) r.title else "Čakám na hodnoty",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = if (on) c.onTileOn else MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (r.detail.isNotEmpty()) {
+                        Text(r.detail, style = MaterialTheme.typography.bodyMedium, color = if (on) c.onTileOnMuted else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            if (r.batteryText.isNotEmpty()) {
+                Text(
+                    r.batteryText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (r.batteryLow) MaterialTheme.colorScheme.error else if (on) c.onTileOnMuted else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (r.tamper) {
+                Text("Zariadenie hlási otvorenie krytu.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            }
+            Text(
+                "Senzor appka len zobrazuje. Batériové senzory posielajú hodnoty brána; ak sa dlho nezmenia, " +
+                    "stav je posledný, ktorý brána pozná.",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (on) c.onTileOnMuted else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** Brána: stav, počet podzariadení v appke a diagnostika (surová odpoveď brány na dotaz na podzariadenia). */
+@Composable
+private fun GatewayCard(device: Device, vm: HomeViewModel, wifiOn: Boolean) {
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var info by remember { mutableStateOf<String?>(null) }
+    val n = Gateways.childCount(device)
+    DomovCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconCircle(Sym.devicesOther, on = false, size = 48.dp)
+            Spacer(Modifier.size(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Brána", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (n == 0) "V appke zatiaľ nemá žiadne zariadenia" else "V appke má " + Scenes.devicesText(n),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Text(
+            "Zigbee zariadenia (senzory, zásuvky, žiarovky) sa pridávajú cez Synchronizovať s Tuya cloudom. " +
+                "Ovládajú sa lokálne cez túto bránu, ktorá musí byť v domácej sieti.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(
+            enabled = wifiOn && !busy,
+            onClick = {
+                busy = true
+                scope.launch {
+                    info = vm.gatewayInfo(device).fold(
+                        onSuccess = { list -> if (list.isEmpty()) "Brána odpovedala, ale zoznam podzariadení neposlala." else list.joinToString("\n\n") },
+                        onFailure = { it.message ?: "Brána neodpovedá" },
+                    )
+                    busy = false
+                }
+            },
+        ) { Text(if (busy) "Pýtam sa brány…" else "Zistiť podzariadenia brány") }
+        info?.let {
+            Text(
+                it.take(1500),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 /** Jeden riadok = jedna hodnota zariadenia. Boolean je vypínač, číslo a text sa menia cez dialóg. */
 @Composable
 private fun DpRow(
@@ -617,13 +727,15 @@ private fun DpRow(
     onMakePower: (() -> Unit)?,
     onMakeWhiteSwitch: (() -> Unit)? = null,
     onMakeColourSwitch: (() -> Unit)? = null,
+    /** Hodnoty senzora sa nikdy neposielajú späť (aj bez popisu z cloudu). */
+    forceReadOnly: Boolean = false,
 ) {
     var editing by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     val raw = value.toString()
     val text = Schema.format(schema, value)
-    val readOnly = schema != null && Schema.isReadOnly(schema.code)
+    val readOnly = forceReadOnly || (schema != null && Schema.isReadOnly(schema.code))
     val numberSchema = schema?.takeIf { it.type == DpType.INTEGER && value is Number }
     val enumSchema = schema?.takeIf { it.type == DpType.ENUM && it.range.isNotEmpty() }
     val editable = !readOnly && (value is Number || (value is String && raw.length <= 40))

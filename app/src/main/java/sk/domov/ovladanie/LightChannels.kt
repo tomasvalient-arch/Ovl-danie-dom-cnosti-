@@ -590,6 +590,7 @@ object TechInfo {
         if (device.model.isNotBlank()) appendLine("Model / názov produktu: ${device.model}")
         appendLine("Device ID: ${maskId(device.devId)}")
         appendLine("Protokol: ${device.version}")
+        if (device.isSub) appendLine("Podzariadenie cez bránu (cid ${maskId(device.cid)}, brána ${maskId(device.gatewayId)})")
         appendLine("Rozpoznané ako: $detected")
         if (device.powerDp.isNotBlank()) appendLine("Ručne nastavený hlavný vypínač: DP ${device.powerDp}")
         if (device.whiteSwitchDp.isNotBlank() || device.colourSwitchDp.isNotBlank()) {

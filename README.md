@@ -347,6 +347,25 @@ Kým beží Príchod a odchod, Android vyžaduje službu v popredí a k nej noti
 
 Medzi počasím a fázou mesiaca je úzky pás s dnešným dňom, dátumom a meninami (napr. „Streda 18. novembra · Meniny: Eugen“) a pod tým zajtrajšie meniny („Zajtra 19. novembra · Alžbeta, Liliana“). Použité je Oficiálne kalendárium Kalendárovej komisie pri Ministerstve kultúry SR (475 mien na 366 dní vrátane 29. 2. – Radomír). V dňoch bez mena (1. 1., 1. 5., 2. 11., 25. 12.) pás ukáže názov sviatku. Dátum sa prepíše o polnoci aj po návrate do appky. Bez internetu.
 
+## 23. Zigbee zariadenia cez Tuya bránu (od verzie 1.35)
+
+Appka vie zobraziť a ovládať aj Zigbee zariadenia pripojené k Tuya bráne (napr. Zigbee brána s ethernetom WG016 / THP10-Z, aplikácia Smart Life). Podzariadenie nemá vlastnú IP adresu ani local key: appka sa lokálne pripojí k **bráne** (port 6668, jej IP, Device ID a local key) a v príkaze uvedie ID podzariadenia (`cid`, v Tuya cloude `node_id`). Funguje to len v domácej sieti, rovnako ako ostatné zariadenia.
+
+**Ako pridať.** Nastav Tuya cloud (časť 2a), potom Nastavenia → Synchronizovať s Tuya cloudom. V okne sa objaví zoznam „Zigbee zariadenia (cez bránu)“; ťuknutím na Pridať (alebo Pridať všetky Zigbee) sa pridajú aj s bránou, ak ju appka ešte nemá. Appka sama zistí, cez ktorú bránu zariadenie ide (dotaz na podzariadenia brány v cloude; ak je v účte len jedna brána, patria jej).
+
+**Čo sa zobrazuje a ovláda**
+- Senzory dverí a okien (otvorené / zatvorené), pohybu, teploty a vlhkosti, vody, dymu a plynu: dlaždica ukazuje hodnotu a stav batérie; pri poplachu (otvorené dvere, pohyb, únik) svieti jantárovo. Senzory sa len zobrazujú, nič sa im neposiela, a nikdy sa nezapnú ani nevypnú automatikou, scénou ani Všetko vypnúť.
+- Zásuvky, vypínače a žiarovky sa správajú ako WiFi zariadenia (vypínač, jas, teplota a farba, widgety, príchod a odchod, scény).
+- Tlačidlá a diaľkové ovládače sa zobrazia (stav batérie), ale stlačenia zatiaľ appka nezachytáva.
+- Brána má v zozname vlastnú dlaždicu a v detaile tlačidlo „Zistiť podzariadenia brány“ (surová odpoveď brány, na ladenie).
+- Nové skupina **Senzory** na Domove.
+
+**Čo ešte nie je (ďalšia verzia):** upozornenia pri zmene senzora, automatizácie podľa senzorov a udalosti tlačidiel – potrebujú stále otvorené spojenie s bránou. Batériové senzory sa nedajú „spýtať“ priamo; brána vráti ich poslednú známu hodnotu.
+
+**Technicky.** `TuyaDevice` dostal voliteľné `cid` (tvary požiadaviek podľa tinytuya: 3.3 `{"t":…,"cid":…}`, 3.4 a 3.5 `{"cid":…}`, príkaz s `data.cid` a `ctype 0`), odpovede iných podzariadení na tom istom spojení sa preskakujú. Pripojenie rieši `Gateways.route` (Zigbee.kt); všetky operácie na jednej bráne idú po jednom. Druh senzora určuje `Sensors` podľa kódov hodnôt z Tuya popisu (`doorcontact_state`, `pir`, `va_temperature`…) a kategórie. Testy: `tools/GatewayProtocolTest.java` (falošná brána), `tools/ZigbeeTest.kt`.
+
+**Overenie.** Verzia 1.35.0 bola napísaná, kým brána ešte nedorazila, takže komunikácia je overená len proti simulovanej bráne podľa dokumentácie tinytuya. Po dorazení brány treba ešte ladenie (najmä tvary odpovedí konkrétnej brány) – pošli „Technické info“ brány a podzariadenia.
+
 ## Limity
 
 - Zariadenia pripojené cez Zigbee/Bluetooth bránu nie sú podporované (komunikujú cez bránu iným spôsobom).
@@ -448,3 +467,4 @@ Na Domove je pod Nákupom riadok **Udalosti**. Kým sa nič nechystá, je tenký
 - 1.34.3: **režim fritézy je zrušený** – zmizol z obrazovky (tlačidlá režimov, Iný…) aj z receptov. Recept = názov + čas + teplota a režim fritézy nemení. Staré recepty s režimom sa načítajú bez neho.
 - 1.34.4: **oprava ikony mesiaca** – ikona ukazovala opačné osvetlenie (pri priberajúcom mesiaci pribúdala tmavá časť namiesto svetlej, pri nove svietil celý disk). Oblúk osvetlenej strany (`moonLitPath` v `MoonAndroid.kt`) mal obrátený smer; teraz sedí osvetlenie aj strana pre všetky fázy (na severnej pologuli pri priberaní svetlo sprava).
 - 1.34.5: **na Domove zmizlo veľké červené upozornenie „Nie si na domácej WiFi“**; mimo domácej WiFi ostáva len malý chip „Bez WiFi“ v hlavičke. Upozornenie ostáva na obrazovke detailu zariadenia (`WifiBanner` v `DeviceScreen.kt`), kde chip nie je.
+- 1.35.0: **Zigbee zariadenia cez Tuya bránu** (senzory dverí/okien, pohybu, teploty a vlhkosti, vody, dymu; zásuvky, vypínače, žiarovky; tlačidlá len ako zobrazenie). Pridanie zo Synchronizácie s Tuya cloudom, skupina Senzory, brána s diagnostikou. Nové: `Zigbee.kt`, `cid` v `TuyaDevice`. Otestované len proti simulovanej bráne (pozri časť 23).

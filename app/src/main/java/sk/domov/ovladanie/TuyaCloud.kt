@@ -46,9 +46,18 @@ data class CloudDevice(
     val productName: String = "",
     val uid: String = "",
     val online: Boolean = false,
-    /** Zariadenie pripojené cez bránu (Zigbee/Bluetooth) – lokálne ho appka ovládať nevie. */
+    /** Zariadenie pripojené cez bránu (Zigbee/Bluetooth): ovláda sa cez bránu (cid = nodeId), nie priamo. */
     val sub: Boolean = false,
-)
+    /** ID podzariadenia za bránou (node_id z cloudu); prázdne, ak ho cloud neposlal. */
+    val nodeId: String = "",
+    /** Device ID brány, cez ktorú je podzariadenie pripojené; prázdne, ak sa nezistilo. */
+    val parentId: String = "",
+    /** Cloud ID (uuid) – záloha, ak node_id chýba. */
+    val uuid: String = "",
+) {
+    /** ID, ktorým sa podzariadenie oslovuje cez bránu (node_id, inak uuid). */
+    val cid: String get() = nodeId.ifBlank { uuid }
+}
 
 /** Chyba z Tuya cloudu s kódom (napr. 1004 = zlý podpis). */
 class CloudException(val code: Int, val msg: String) : IOException("Tuya cloud $code: $msg")
@@ -213,6 +222,10 @@ class TuyaCloudClient(
                             category = old.category.ifBlank { d.category },
                             productId = old.productId.ifBlank { d.productId },
                             productName = old.productName.ifBlank { d.productName },
+                            sub = old.sub || d.sub,
+                            nodeId = old.nodeId.ifBlank { d.nodeId },
+                            parentId = old.parentId.ifBlank { d.parentId },
+                            uuid = old.uuid.ifBlank { d.uuid },
                         )
                     }
                     val more = res.optBoolean("has_more", false)
@@ -223,7 +236,58 @@ class TuyaCloudClient(
                 if (e.code in AUTH_ERRORS) throw e
             }
         }
+        runCatching { resolveSubDevices(all) }.onFailure { if (it is CloudException && it.code in AUTH_ERRORS) throw it }
         return all.values.toList()
+    }
+
+    /**
+     * Zistí pri podzariadeniach (Zigbee) ich bránu a node_id. Najprv sa opýta brán na ich podzariadenia
+     * (/v1.0/devices/{brána}/sub-devices). Čo ostane nezistené, doplní sa podľa jedinej brány v účte; node_id sa
+     * ešte skúsi z detailu zariadenia. Chyby jednotlivých dotazov sa ignorujú (zariadenie ostane bez brány a appka
+     * ho ponúkne až keď sa dá ovládať).
+     */
+    private fun resolveSubDevices(all: MutableMap<String, CloudDevice>) {
+        val subs = all.values.filter { it.sub }
+        if (subs.isEmpty()) return
+        val byCategory = all.values.filter { !it.sub && it.category.trim().lowercase() in Gateways.CATEGORIES }.map { it.id }
+        val referenced = subs.map { it.parentId }.filter { it.isNotBlank() }
+        var gateways = (byCategory + referenced).distinct()
+        if (gateways.isEmpty()) {
+            // brána má v cloude neznámu kategóriu: skúsime pár online zariadení bez podzariadení
+            gateways = all.values.filter { !it.sub && it.online }.map { it.id }.take(12)
+        }
+        for (gw in gateways) {
+            if (all.values.none { it.sub && (it.parentId.isBlank() || it.nodeId.isBlank()) }) break
+            for (path in listOf("/v1.0/devices/$gw/sub-devices", "/v1.3/iot-03/devices/$gw/sub-devices")) {
+                val found = try {
+                    CloudParse.subDevices(request("GET", path).opt("result"))
+                } catch (e: CloudException) {
+                    if (e.code in AUTH_ERRORS) throw e
+                    emptyList<Pair<String, String>>()
+                }
+                if (found.isEmpty()) continue
+                found.forEach { (id, cid) ->
+                    val d = all[id] ?: return@forEach
+                    all[id] = d.copy(nodeId = d.nodeId.ifBlank { cid }, parentId = gw, sub = true)
+                }
+                break
+            }
+        }
+        // jediná brána v účte: podzariadenia bez zistenej brány patria jej
+        val onlyGateway = byCategory.singleOrNull()
+        if (onlyGateway != null) {
+            all.values.filter { it.sub && it.parentId.isBlank() }.forEach { d -> all[d.id] = d.copy(parentId = onlyGateway) }
+        }
+        // node_id z detailu zariadenia
+        all.values.filter { it.sub && it.nodeId.isBlank() }.take(20).forEach { d ->
+            try {
+                val r = request("GET", "/v1.0/devices/${d.id}").optJSONObject("result")
+                val node = if (r == null) "" else CloudParse.firstText(r, "node_id", "nodeId")
+                if (node.isNotBlank()) all[d.id] = d.copy(nodeId = node)
+            } catch (e: CloudException) {
+                if (e.code in AUTH_ERRORS) throw e
+            }
+        }
     }
 
     /** Popis hodnôt zariadenia vo formáte tinytuya „mapping“. Pri chybe vráti null (zariadenie sa pridá aj bez neho). */
@@ -291,7 +355,38 @@ object CloudParse {
                 uid = o.optString("uid").trim(),
                 online = o.optBoolean("online", false) || o.optBoolean("is_online", false),
                 sub = o.optBoolean("sub", false),
+                nodeId = firstText(o, "node_id", "nodeId", "cid"),
+                parentId = firstText(o, "parent_id", "parentId", "gateway_id", "gatewayId", "parent"),
+                uuid = o.optString("uuid").trim(),
             )
+        }
+    }
+
+    /** Prvý neprázdny textový údaj z viacerých možných názvov poľa (Tuya ich v rôznych odpovediach pomenúva rôzne). */
+    internal fun firstText(o: JSONObject, vararg names: String): String {
+        for (n in names) {
+            val v = o.opt(n)
+            if (v is String && v.isNotBlank()) return v.trim()
+        }
+        return ""
+    }
+
+    /**
+     * Podzariadenia brány z odpovede /v1.0/devices/{gateway}/sub-devices: pole v result, alebo result.devices / list.
+     * Vráti dvojice (Device ID podzariadenia, node_id). Tolerantné: položka bez ID sa preskočí, node_id sa hľadá pod
+     * viacerými názvami a nakoniec sa použije uuid.
+     */
+    fun subDevices(result: Any?): List<Pair<String, String>> {
+        val arr: JSONArray = when (result) {
+            is JSONArray -> result
+            is JSONObject -> result.optJSONArray("devices") ?: result.optJSONArray("list") ?: result.optJSONArray("sub_devices") ?: return emptyList()
+            else -> return emptyList()
+        }
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val id = firstText(o, "id", "device_id", "devId")
+            val cid = firstText(o, "node_id", "nodeId", "cid", "uuid")
+            if (id.isEmpty() || cid.isEmpty()) null else id to cid
         }
     }
 

@@ -17,6 +17,8 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.CRC32;
 
 import javax.crypto.Cipher;
@@ -53,6 +55,12 @@ public final class TuyaDevice {
     private static final int CMD_HEART_BEAT = 0x09;
     /** FRM_LAN_QUERY_DP – požiadavka, aby zariadenie poslalo aktuálne hodnoty vybraných DP (tinytuya updatedps). */
     private static final int CMD_UPDATEDPS = 0x12;
+    /** LAN_EXT_STREAM – dotaz brány na zoznam jej podzariadení a ich stav (tinytuya subdev_query). */
+    private static final int CMD_LAN_EXT_STREAM = 0x40;
+
+    /** ID podzariadenia (node_id) je len písmená, čísla a pár znakov; do JSON sa vkladá bez escapovania. */
+    private static final Pattern CID_OK = Pattern.compile("[A-Za-z0-9_.:-]*");
+    private static final Pattern CID_IN_TEXT = Pattern.compile("\"cid\"\\s*:\\s*\"([^\"]*)\"");
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -60,6 +68,8 @@ public final class TuyaDevice {
     private final int port;
     private final String devId;
     private final byte[] localKey;
+    /** Prázdne = zariadenie samo (WiFi). Inak ID podzariadenia (node_id) za touto bránou (Zigbee, Bluetooth). */
+    private final String cid;
     private final int proto; // 33, 34 alebo 35
     private final byte[] versionHeader; // "3.x" + 12 núl
     private final SocketFactory socketFactory;
@@ -69,9 +79,21 @@ public final class TuyaDevice {
     }
 
     public TuyaDevice(String host, int port, String devId, String localKey, String version, SocketFactory socketFactory) {
+        this(host, port, devId, localKey, version, socketFactory, "");
+    }
+
+    /**
+     * Podzariadenie za bránou: [devId] a [localKey] sú údaje brány, [cid] je ID podzariadenia (node_id).
+     * S prázdnym [cid] sa komunikuje priamo so zariadením, presne ako doteraz.
+     */
+    public TuyaDevice(String host, int port, String devId, String localKey, String version, SocketFactory socketFactory, String cid) {
         this.host = host;
         this.port = port;
         this.devId = devId;
+        this.cid = cid == null ? "" : cid.trim();
+        if (!CID_OK.matcher(this.cid).matches()) {
+            throw new IllegalArgumentException("Neplatné ID podzariadenia (cid)");
+        }
         this.localKey = localKey.getBytes(StandardCharsets.UTF_8);
         if (this.localKey.length != 16) {
             throw new IllegalArgumentException("Local key musí mať presne 16 znakov");
@@ -91,8 +113,7 @@ public final class TuyaDevice {
     /** Vráti JSON so stavom (napr. {"dps":{"1":true}} alebo {"data":{"dps":{...}}}). */
     public String query() throws IOException {
         try (Session s = new Session()) {
-            String json = "{\"gwId\":\"" + devId + "\",\"devId\":\"" + devId + "\",\"uid\":\"" + devId
-                    + "\",\"t\":\"" + now() + "\"}";
+            String json = queryJson(proto, devId, cid, now());
             s.send(proto >= 34 ? CMD_QUERY_NEW : CMD_QUERY, json.getBytes(StandardCharsets.UTF_8), false);
             Frame f = s.await(CMD_QUERY, CMD_QUERY_NEW, CMD_STATUS);
             return text(f);
@@ -108,8 +129,7 @@ public final class TuyaDevice {
     public List<String> queryWithExtra(int[][] groups, long waitMs, boolean stopOnFirst) throws IOException {
         try (Session s = new Session()) {
             List<String> out = new ArrayList<>();
-            String json = "{\"gwId\":\"" + devId + "\",\"devId\":\"" + devId + "\",\"uid\":\"" + devId
-                    + "\",\"t\":\"" + now() + "\"}";
+            String json = queryJson(proto, devId, cid, now());
             s.send(proto >= 34 ? CMD_QUERY_NEW : CMD_QUERY, json.getBytes(StandardCharsets.UTF_8), false);
             out.add(text(s.await(CMD_QUERY, CMD_QUERY_NEW, CMD_STATUS)));
             if (groups == null) {
@@ -132,7 +152,7 @@ public final class TuyaDevice {
                             break;
                         }
                         String t = f.retcode == 0 ? text(f) : "";
-                        if (!t.isEmpty() && t.contains("dps")) {
+                        if (!t.isEmpty() && t.contains("dps") && !forOtherCid(t)) {
                             out.add(t);
                             if (stopOnFirst) {
                                 break;
@@ -171,8 +191,7 @@ public final class TuyaDevice {
         while (!cancel.isCancelled() && System.currentTimeMillis() < end) {
             try (Session s = new Session()) {
                 listener.onInfo("pripojené");
-                String q = "{\"gwId\":\"" + devId + "\",\"devId\":\"" + devId + "\",\"uid\":\"" + devId
-                        + "\",\"t\":\"" + now() + "\"}";
+                String q = queryJson(proto, devId, cid, now());
                 s.send(proto >= 34 ? CMD_QUERY_NEW : CMD_QUERY, q.getBytes(StandardCharsets.UTF_8), false);
                 if (extraDps != null && extraDps.length > 0) {
                     s.send(CMD_UPDATEDPS, updateJson(extraDps), false);
@@ -189,6 +208,9 @@ public final class TuyaDevice {
                         continue;
                     }
                     String t = text(f);
+                    if (forOtherCid(t)) {
+                        continue; // hlásenie iného podzariadenia na tej istej bráne
+                    }
                     if (!t.isEmpty() || f.retcode != 0) {
                         listener.onFrame(f.cmd, f.retcode, t);
                     }
@@ -208,7 +230,12 @@ public final class TuyaDevice {
         }
     }
 
-    private static byte[] updateJson(int[] dps) {
+    private byte[] updateJson(int[] dps) {
+        return updateJson(dps, cid).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** Požiadavka na vybrané DP (UPDATEDPS). Pri podzariadení pribudne cid (tinytuya ho pridáva ku každému príkazu). */
+    static String updateJson(int[] dps, String cid) {
         StringBuilder b = new StringBuilder("{\"dpId\":[");
         for (int i = 0; i < dps.length; i++) {
             if (i > 0) {
@@ -216,7 +243,89 @@ public final class TuyaDevice {
             }
             b.append(dps[i]);
         }
-        return b.append("]}").toString().getBytes(StandardCharsets.UTF_8);
+        b.append(']');
+        if (!cid.isEmpty()) {
+            b.append(",\"cid\":\"").append(cid).append('"');
+        }
+        return b.append('}').toString();
+    }
+
+    /**
+     * Dotaz na stav. Samotné zariadenie: ako doteraz. Podzariadenie za bránou (tinytuya, šablóna zigbee):
+     * 3.3 = {"t":int,"cid":…}, 3.4 a 3.5 = {"cid":…}.
+     */
+    static String queryJson(int proto, String devId, String cid, long nowSec) {
+        if (cid.isEmpty()) {
+            return "{\"gwId\":\"" + devId + "\",\"devId\":\"" + devId + "\",\"uid\":\"" + devId
+                    + "\",\"t\":\"" + nowSec + "\"}";
+        }
+        if (proto >= 34) {
+            return "{\"cid\":\"" + cid + "\"}";
+        }
+        return "{\"t\":" + nowSec + ",\"cid\":\"" + cid + "\"}";
+    }
+
+    /**
+     * Príkaz na nastavenie hodnôt. Podzariadenie: 3.3 = {"t":int,"cid":…,"dps":…}, 3.4 a 3.5 = cid aj ctype 0
+     * v časti data (tinytuya, šablóny zigbee_v3.4 a zigbee_v3.5).
+     */
+    static String controlJson(int proto, String devId, String cid, String dpsJson, long nowSec) {
+        if (cid.isEmpty()) {
+            if (proto >= 34) {
+                return "{\"data\":{\"ctype\":0,\"devId\":\"" + devId + "\",\"gwId\":\"" + devId
+                        + "\",\"uid\":\"\",\"dps\":" + dpsJson + "},\"protocol\":5,\"t\":" + nowSec + "}";
+            }
+            return "{\"devId\":\"" + devId + "\",\"uid\":\"" + devId + "\",\"t\":\"" + nowSec
+                    + "\",\"dps\":" + dpsJson + "}";
+        }
+        if (proto >= 34) {
+            return "{\"protocol\":5,\"t\":" + nowSec + ",\"data\":{\"cid\":\"" + cid + "\",\"ctype\":0,\"dps\":"
+                    + dpsJson + "},\"cid\":\"" + cid + "\"}";
+        }
+        return "{\"t\":" + nowSec + ",\"cid\":\"" + cid + "\",\"dps\":" + dpsJson + "}";
+    }
+
+    /** Hlásenie patrí inému podzariadeniu tej istej brány (obsahuje cid, ktorý nie je náš). */
+    private boolean forOtherCid(String text) {
+        if (cid.isEmpty() || text == null || text.isEmpty()) {
+            return false;
+        }
+        Matcher m = CID_IN_TEXT.matcher(text);
+        return m.find() && !m.group(1).equals(cid);
+    }
+
+    /**
+     * Opýta sa brány na zoznam podzariadení a ich stav online (tinytuya subdev_query). Vráti texty všetkých
+     * odpovedí; formát závisí od brány, preto sa používa len ako diagnostika. Chyby posiela von.
+     */
+    public List<String> subdevQuery(long waitMs) throws IOException {
+        try (Session s = new Session()) {
+            s.send(CMD_LAN_EXT_STREAM, "{\"data\":{\"cids\":[]},\"reqType\":\"subdev_online_stat_query\"}"
+                    .getBytes(StandardCharsets.UTF_8), false);
+            List<String> out = new ArrayList<>();
+            long end = System.currentTimeMillis() + waitMs;
+            while (true) {
+                long left = end - System.currentTimeMillis();
+                if (left <= 0) {
+                    break;
+                }
+                Frame f = s.poll((int) Math.max(50, left));
+                if (f == null) {
+                    break;
+                }
+                if (f.cmd == CMD_HEART_BEAT) {
+                    continue;
+                }
+                String t = text(f);
+                if (f.retcode != 0) {
+                    t = "(kód " + f.retcode + ") " + t;
+                }
+                if (!t.trim().isEmpty()) {
+                    out.add(t);
+                }
+            }
+            return out;
+        }
     }
 
     /** Nastaví datapointy, napr. dpsJson = {"1":true}. Vráti odpoveď zariadenia (často prázdnu). */
@@ -233,15 +342,7 @@ public final class TuyaDevice {
     }
 
     private byte[] controlJson(String dpsJson) {
-        String json;
-        if (proto >= 34) {
-            json = "{\"data\":{\"ctype\":0,\"devId\":\"" + devId + "\",\"gwId\":\"" + devId
-                    + "\",\"uid\":\"\",\"dps\":" + dpsJson + "},\"protocol\":5,\"t\":" + now() + "}";
-        } else {
-            json = "{\"devId\":\"" + devId + "\",\"uid\":\"" + devId + "\",\"t\":\"" + now()
-                    + "\",\"dps\":" + dpsJson + "}";
-        }
-        return json.getBytes(StandardCharsets.UTF_8);
+        return controlJson(proto, devId, cid, dpsJson, now()).getBytes(StandardCharsets.UTF_8);
     }
 
     /** Otvorí trvalé spojenie na rýchle posielanie príkazov počas ťahania posuvníka (3.4/3.5 bez nového vyjednávania). */
@@ -372,13 +473,18 @@ public final class TuyaDevice {
 
         /** Čaká na rámec s jedným z očakávaných príkazov, ostatné (heartbeat a pod.) preskočí. */
         Frame await(int... expected) throws IOException {
-            for (int i = 0; i < 8; i++) {
+            // brána môže medzi odpoveďami posielať hlásenia iných podzariadení; tie preskočíme, preto viac pokusov
+            int max = cid.isEmpty() ? 8 : 24;
+            for (int i = 0; i < max; i++) {
                 Frame f = readFrame(key, false);
                 if (f.retcode != 0) {
                     throw new DeviceException(f.retcode);
                 }
                 for (int e : expected) {
                     if (f.cmd == e) {
+                        if (forOtherCid(text(f))) {
+                            break;
+                        }
                         return f;
                     }
                 }

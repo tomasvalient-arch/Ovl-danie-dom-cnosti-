@@ -139,7 +139,8 @@ object HomeNet {
      * adresou routera to nedokáže). Skúsi naraz najviac 4 zariadenia. Vráti zariadenie, ktoré odpovedalo, alebo null.
      */
     suspend fun verify(context: Context, network: Network): Device? = withContext(Dispatchers.IO) {
-        val devices = DeviceStore(context).load().filter { it.ip.isNotBlank() && it.localKey.isNotBlank() }
+        // brána a podzariadenia sa nepočítajú: o prítomnosti doma rozhodujú zariadenia, ktoré odpovedajú sami so svojím local key
+        val devices = DeviceStore(context).load().filter { it.ip.isNotBlank() && it.localKey.isNotBlank() && !it.isSub && !Gateways.isGateway(it) }
         if (devices.isEmpty()) return@withContext null
         // najprv zariadenia, ktoré naposledy odpovedali
         val ordered = devices.sortedByDescending { StateCache.load(context, it.id) != null }.take(4)
