@@ -83,6 +83,8 @@ object Meals {
         val updatedAt: Long = 0,
         val deleted: Boolean = false,
         val deviceId: String = "",
+        /** „Nevarilo sa“ (odpovedané v Uvarené? alebo zrušené): nejde do nákupu ani sa nepýta znova. */
+        val skipped: Boolean = false,
     )
 
     data class PantryItem(
@@ -96,9 +98,20 @@ object Meals {
         val updatedAt: Long = 0,
         val deleted: Boolean = false,
         val deviceId: String = "",
+        /** Koľko váži 1 ks v gramoch (0 = neznáme; vtedy sa použije tabuľka bežných surovín). */
+        val pieceG: Double = 0.0,
+        /** Obvyklé balenie v základnej jednotke (g / ml / ks): naučí sa z posledného nákupu s množstvom. */
+        val pack: Double = 0.0,
     )
 
-    enum class NeedKind { MISSING, ALREADY, ASK }
+    /**
+     * MISSING = chýba, pridať; ALREADY = už je v zozname; ASK = nejasné (pridá sa po zaškrtnutí);
+     * TOPUP = v zozname je menej, než treba (zvýšiť množstvo); STALE = v zozname je viac, než plán potrebuje (znížiť / odstrániť).
+     */
+    enum class NeedKind { MISSING, ALREADY, ASK, TOPUP, STALE }
+
+    /** Časť potreby z jedného jedla v pláne (základná jednotka g / ml / ks); [sig] = recept a porcie, z ktorých sa počítalo. */
+    data class Part(val mealId: String, val sig: String, val base: Double)
 
     data class ShopNeed(
         val name: String,
@@ -106,8 +119,18 @@ object Meals {
         val unit: String,
         val kind: NeedKind,
         val sources: List<String> = emptyList(),
+        /** TOPUP / STALE / ALREADY: položka v zozname, ktorej sa to týka. */
+        val itemId: String = "",
+        /** TOPUP / STALE: nový text položky; pri STALE prázdny = odstrániť. */
+        val newText: String = "",
+        /** Krátka poznámka pod riadkom (napr. „Na zozname je 1 l“). */
+        val note: String = "",
+        val parts: List<Part> = emptyList(),
     ) {
         fun shopText(): String = formatShop(name, amount, unit)
+
+        /** Jednoznačný kľúč riadku v dialógu. */
+        fun uiKey(): String = "${kind.name}:$itemId:${shopText()}"
     }
 
     data class NeededLine(
@@ -115,11 +138,50 @@ object Meals {
         val amount: Double,
         val unit: String,
         val sources: List<String>,
+        val parts: List<Part> = emptyList(),
     )
 
     fun fold(text: String): String = ShoppingHistory.fold(text)
 
     fun pantryId(name: String): String = "p:" + fold(name)
+
+    private val NON_ALNUM = Regex("[^a-z0-9]+")
+
+    /** Zjednodušenie slova na základ: koncové samohlásky preč („paradajka/paradajky“, „vajce/vajcia“ → rovnaký základ). */
+    private fun stem(word: String): String {
+        var s = word
+        while (s.length > 3 && s.last() in "aeiouy") s = s.dropLast(1)
+        return s
+    }
+
+    /**
+     * Kľúč na porovnávanie názvov surovín: bez diakritiky, veľkosti písmen, interpunkcie a koncoviek
+     * (množné číslo, 2. pád). „Paradajky“, „paradajka“ aj „Paradajka“ sú to isté; „Mlieko“ a „mlieka“ tiež.
+     * Id zásoby ([pantryId]) sa tým nemení – kľúč slúži len na hľadanie zhody.
+     */
+    fun key(name: String): String =
+        fold(name).replace(NON_ALNUM, " ").trim().split(' ').filter { it.isNotEmpty() }.joinToString(" ") { stem(it) }
+
+    private val STAPLE_KEYS: Set<String> by lazy { STAPLES.map { key(it) }.toSet() }
+
+    /** Približná hmotnosť 1 ks bežných surovín (g) – na prepočet „2 ks cibule“ ↔ „300 g“. */
+    private val PIECE_RAW = mapOf(
+        "cibuľa" to 150.0, "mrkva" to 100.0, "zemiak" to 120.0, "paradajka" to 150.0, "rajčina" to 150.0,
+        "paprika" to 150.0, "uhorka" to 300.0, "cuketa" to 250.0, "baklažán" to 300.0, "kaleráb" to 300.0,
+        "brokolica" to 400.0, "karfiol" to 800.0, "zeler" to 400.0, "petržlen" to 80.0, "šalát" to 300.0,
+        "jablko" to 180.0, "hruška" to 180.0, "banán" to 120.0, "citrón" to 100.0, "pomaranč" to 200.0,
+        "avokádo" to 200.0, "mozzarella" to 125.0,
+    )
+
+    private val PIECE_TABLE: Map<String, Double> by lazy { PIECE_RAW.mapKeys { key(it.key) } }
+
+    /** Hmotnosť 1 ks v g: z položky v zásobách, inak z tabuľky (aj podľa posledného slova: „červená cibuľa“); 0 = neznáme. */
+    fun pieceWeight(name: String, item: PantryItem? = null): Double {
+        if (item != null && item.pieceG > 0.0) return item.pieceG
+        val k = key(name)
+        PIECE_TABLE[k]?.let { return it }
+        return PIECE_TABLE[k.substringAfterLast(' ')] ?: 0.0
+    }
 
     fun mealId(date: String, slot: Slot): String = "m:$date:${slot.code}"
 
@@ -134,6 +196,20 @@ object Meals {
 
     /** Doplnenie nákupu sčíta od [from] (dnes) do nedele toho istého týždňa. */
     fun fillUntil(from: LocalDate): LocalDate = weekSunday(from)
+
+    /**
+     * Doplnenie nákupu s nastaveným dňom nákupu [shopDay] (1 = pondelok … 7 = nedeľa; 0 = nenastavené → do nedele).
+     * Pokrýva čas až do dňa pred nákupom po najbližšom nákupe (najbližší nákup + 6 dní; ak je dnes deň nákupu, dnes + 6 dní).
+     */
+    fun fillUntil(from: LocalDate, shopDay: Int): LocalDate {
+        if (shopDay !in 1..7) return weekSunday(from)
+        val shift = (shopDay - from.dayOfWeek.value + 7) % 7
+        return from.plusDays(shift.toLong() + 6)
+    }
+
+    /** Text pre „Súčet chýbajúceho od dnes do …“. */
+    fun rangeLabel(from: LocalDate, to: LocalDate): String =
+        if (to == weekSunday(from)) "do nedele" else "do ${dayLabel(to).lowercase()} ${formatDate(to)}"
 
     fun dayLabel(day: LocalDate): String = WEEKDAYS[day.dayOfWeek.value - 1]
 
@@ -201,25 +277,30 @@ object Meals {
 
     private val TAIL_NUMBER = Regex("""^(.*?)\s+(\d+(?:[.,]\d+)?)\s*$""")
 
-    fun parseAmount(raw: String): Parsed {
+    fun parseAmount(raw: String): Parsed = parseInternal(raw).first
+
+    /** Je množstvo v texte napísané výslovne („Mlieko 2 l“), alebo sa len predpokladá 1 ks („Mlieko“)? */
+    fun hasQuantity(raw: String): Boolean = parseInternal(raw).second
+
+    private fun parseInternal(raw: String): Pair<Parsed, Boolean> {
         val text = raw.trim()
-        if (text.isEmpty()) return Parsed("", 1.0, "ks")
+        if (text.isEmpty()) return Parsed("", 1.0, "ks") to false
         TAIL_UNIT.matchEntire(text)?.let { m ->
             val name = m.groupValues[1].trim().trimEnd(',', '.', ';', '-')
             val amount = parseNumber(m.groupValues[2])
             val rawUnit = m.groupValues[3].lowercase()
             val unit = UNIT_ALIASES[rawUnit] ?: "ks"
             val scaled = amount * (UNIT_SCALE[rawUnit] ?: 1.0)
-            if (name.isEmpty()) return Parsed(text, 1.0, "ks")
-            if (amount <= 0.0) return Parsed(name, 1.0, "ks")
-            return Parsed(name, scaled, unit)
+            if (name.isEmpty()) return Parsed(text, 1.0, "ks") to false
+            if (amount <= 0.0) return Parsed(name, 1.0, "ks") to false
+            return Parsed(name, scaled, unit) to true
         }
         TAIL_NUMBER.matchEntire(text)?.let { m ->
             val name = m.groupValues[1].trim().trimEnd(',', '.', ';', '-')
             val amount = parseNumber(m.groupValues[2])
-            if (name.isNotEmpty() && amount > 0.0) return Parsed(name, amount, "ks")
+            if (name.isNotEmpty() && amount > 0.0) return Parsed(name, amount, "ks") to true
         }
-        return Parsed(text, 1.0, "ks")
+        return Parsed(text, 1.0, "ks") to false
     }
 
     fun parseNumber(raw: String): Double =
@@ -369,46 +450,80 @@ object Meals {
 
     fun isStaple(name: String): Boolean {
         val parts = name.split(',', ';', '+', '/')
-            .map { fold(it) }
+            .map { key(it) }
             .filter { it.isNotEmpty() }
         if (parts.isEmpty()) return false
-        return parts.all { it in STAPLES }
+        return parts.all { it in STAPLE_KEYS }
     }
 
+    /** Množstvo v základnej jednotke rodiny [target] (g / ml / ks); ks ↔ g cez hmotnosť kusu, inak null. */
+    private fun baseIn(amount: Double, unit: String, target: String, grams: Double): Double? {
+        val f = family(unit)
+        if (f == target) return toBase(amount, unit)
+        if (grams <= 0.0) return null
+        return when {
+            f == "ks" && target == "g" -> amount * grams
+            f == "g" && target == "ks" -> toBase(amount, unit) / grams
+            else -> null
+        }
+    }
+
+    /** Zásoba vyjadrená v základnej jednotke potreby (g / ml / ks); null = nedá sa prepočítať (napr. g ↔ ks bez hmotnosti kusu). */
+    private fun stockBaseFor(item: PantryItem, needUnit: String): Double? =
+        baseIn(item.amount, item.unit, family(needUnit), pieceWeight(item.name, item))
+
+    /**
+     * Odškrtnutý nákup do zásob. Množstvo z názvu („Mlieko 2 l“) sa pripočíta (ks ↔ g cez hmotnosť kusu, ak je známa)
+     * a zapamätá sa ako obvyklé balenie. Bez množstva v názve („Mlieko“) sa pripočíta obvyklé balenie z minula;
+     * ak ho nepoznáme a zásoba nie je v kusoch, zásoby sa nemenia (veľkosť balenia nevieme).
+     */
     fun addPurchased(pantry: List<PantryItem>, rawName: String, now: Long, deviceId: String): List<PantryItem> {
-        val parsed = parseAmount(rawName)
+        val (parsed, explicit) = parseInternal(rawName)
         val name = parsed.name.ifBlank { rawName.trim() }
         if (name.isEmpty()) return pantry
-        val key = fold(name)
+        val k = key(name)
         val live = pantry.filter { !it.deleted }
-        val existing = live.firstOrNull { fold(it.name) == key }
+        val existing = live.firstOrNull { key(it.name) == k }
             ?: pantry.firstOrNull { it.id == pantryId(name) }
-        return if (existing == null) {
-            pantry + PantryItem(
-                id = pantryId(name),
+        fun fresh() = PantryItem(
+            id = pantryId(name),
+            name = name,
+            amount = parsed.amount,
+            unit = parsed.unit,
+            pack = if (explicit) toBase(parsed.amount, parsed.unit) else 0.0,
+            updatedAt = now,
+            deviceId = deviceId,
+        )
+        if (existing == null) return pantry + fresh()
+        if (existing.deleted) return pantry.map { if (it.id == existing.id) fresh().copy(id = existing.id, always = existing.always, pieceG = existing.pieceG) else it }
+        val hf = family(existing.unit)
+        val grams = pieceWeight(existing.name, existing)
+        val addBase: Double? = when {
+            explicit -> baseIn(parsed.amount, parsed.unit, hf, grams)
+            existing.pack > 0.0 -> existing.pack
+            hf == "ks" -> 1.0
+            else -> null
+        }
+        if (addBase == null) {
+            // nezlučiteľné jednotky: nový nákup nahradí zásobu (ako doteraz); bez množstva zásoby nemeníme
+            if (!explicit) return pantry
+            return pantry.map {
+                if (it.id != existing.id) it
+                else it.copy(name = name, amount = parsed.amount, unit = parsed.unit, pack = toBase(parsed.amount, parsed.unit), updatedAt = now, deviceId = deviceId)
+            }
+        }
+        val total = pretty(toBase(existing.amount, existing.unit) + addBase, hf)
+        return pantry.map {
+            if (it.id != existing.id) it
+            else it.copy(
                 name = name,
-                amount = parsed.amount,
-                unit = parsed.unit,
+                amount = total.amount,
+                unit = total.unit,
+                pack = if (explicit) addBase else existing.pack,
+                deleted = false,
                 updatedAt = now,
                 deviceId = deviceId,
             )
-        } else {
-            val added = if (canMerge(existing.unit, parsed.unit)) {
-                sumQty(existing.amount, existing.unit, parsed.amount, parsed.unit)
-            } else {
-                Qty(parsed.amount, parsed.unit)
-            }
-            pantry.map {
-                if (it.id != existing.id) it
-                else it.copy(
-                    name = name,
-                    amount = added.amount,
-                    unit = added.unit,
-                    deleted = false,
-                    updatedAt = now,
-                    deviceId = deviceId,
-                )
-            }
         }
     }
 
@@ -422,13 +537,20 @@ object Meals {
         var next = pantry
         for (ing in scaledIngredients(recipe, portions)) {
             if (isFuzzy(ing.unit) || isStaple(ing.name)) continue
-            val need = ing.qty()
-            val key = fold(ing.name)
-            val hit = next.firstOrNull { !it.deleted && fold(it.name) == key } ?: continue
+            val k = key(ing.name)
+            val hit = next.firstOrNull { !it.deleted && key(it.name) == k } ?: continue
             if (hit.always) continue
-            if (!canMerge(hit.unit, need.unit)) continue
-            val left = (toBase(hit.amount, hit.unit) - toBase(need.amount, need.unit)).coerceAtLeast(0.0)
-            val pretty = pretty(left, family(hit.unit))
+            val have = stockBaseFor(hit, ing.unit) ?: continue
+            val leftNeed = (have - toBase(ing.amount, ing.unit)).coerceAtLeast(0.0)
+            val hf = family(hit.unit)
+            val grams = pieceWeight(hit.name, hit)
+            val left = when {
+                hf == family(ing.unit) -> leftNeed
+                hf == "ks" -> leftNeed / grams
+                hf == "g" -> leftNeed * grams
+                else -> continue
+            }
+            val pretty = pretty(left, hf)
             next = next.map {
                 if (it.id != hit.id) it
                 else it.copy(amount = pretty.amount, unit = pretty.unit, updatedAt = now, deviceId = deviceId)
@@ -458,8 +580,8 @@ object Meals {
     fun mergeIngredients(items: List<Ingredient>): List<Ingredient> {
         val out = ArrayList<Ingredient>()
         for (item in items) {
-            val key = fold(item.name)
-            val i = out.indexOfFirst { fold(it.name) == key && canMerge(it.unit, item.unit) }
+            val k = key(item.name)
+            val i = out.indexOfFirst { key(it.name) == k && canMerge(it.unit, item.unit) }
             if (i < 0) out += item
             else {
                 val sum = sumQty(out[i].amount, out[i].unit, item.amount, item.unit)
@@ -469,6 +591,9 @@ object Meals {
         return out
     }
 
+    /** Odtlačok jedla pre sledovanie zmien plánu: recept a počet porcií, z ktorých sa počítal nákup. */
+    fun sig(meal: Meal, recipe: Recipe?): String = "${meal.recipeId}|${portionsOf(meal, recipe)}"
+
     fun neededForRange(
         from: LocalDate,
         to: LocalDate,
@@ -476,9 +601,9 @@ object Meals {
         recipes: List<Recipe>,
     ): List<NeededLine> {
         val byId = recipes.filter { !it.deleted }.associateBy { it.id }
-        data class Acc(var amount: Double, var unit: String, val sources: MutableList<String>, val name: String)
+        data class Acc(var amount: Double, var unit: String, val sources: MutableList<String>, val name: String, val parts: MutableList<Part>)
         val acc = LinkedHashMap<String, Acc>()
-        val mealsIn = meals.filter { !it.deleted && !it.cooked && it.recipeId.isNotEmpty() }
+        val mealsIn = meals.filter { !it.deleted && !it.cooked && !it.skipped && it.recipeId.isNotEmpty() }
             .mapNotNull { m ->
                 val d = runCatching { LocalDate.parse(m.date) }.getOrNull() ?: return@mapNotNull null
                 if (d.isBefore(from) || d.isAfter(to)) return@mapNotNull null
@@ -488,29 +613,43 @@ object Meals {
         for ((meal, day) in mealsIn) {
             val recipe = byId[meal.recipeId] ?: continue
             val source = "${dayLabel(day)} · ${meal.title.ifBlank { recipe.name }}"
+            val sig = sig(meal, recipe)
             for (ing in scaledIngredients(recipe, portionsOf(meal, recipe))) {
                 if (ing.name.isBlank() || isFuzzy(ing.unit)) continue
-                val key = fold(ing.name) + ":" + family(ing.unit)
-                val cur = acc[key]
+                val k = key(ing.name) + ":" + family(ing.unit)
+                val part = Part(meal.id, sig, toBase(ing.amount, ing.unit))
+                val cur = acc[k]
                 if (cur == null) {
-                    acc[key] = Acc(ing.amount, ing.unit, mutableListOf(source), ing.name)
+                    acc[k] = Acc(ing.amount, ing.unit, mutableListOf(source), ing.name, mutableListOf(part))
                 } else if (canMerge(cur.unit, ing.unit)) {
                     val sum = sumQty(cur.amount, cur.unit, ing.amount, ing.unit)
                     cur.amount = sum.amount
                     cur.unit = sum.unit
                     if (source !in cur.sources) cur.sources += source
+                    cur.parts += part
                 }
             }
         }
-        return acc.values.map { NeededLine(it.name, it.amount, it.unit, it.sources) }
+        return acc.values.map { NeededLine(it.name, it.amount, it.unit, it.sources, it.parts) }
+    }
+
+    private data class OnList(val item: ShopItem, val parsed: Parsed, val explicit: Boolean)
+
+    /** 1500 ml → 1,5 l, 1200 g → 1,2 kg (len známe jednotky hmotnosti a objemu). */
+    private fun nice(q: Qty): Qty {
+        if (!isKnownUnit(q.unit)) return q
+        val f = family(q.unit)
+        return if (f == "g" || f == "ml") pretty(toBase(q.amount, q.unit), f) else q
     }
 
     /**
      * Chýbajúce suroviny od [from] do [to] (vrátane).
-     * Vždy doma a známe základné suroviny sa vynechajú.
-     * Položky, ktoré už sú v cieľovom zozname (nekúpené), idú do [NeedKind.ALREADY].
-     * Surovina bez záznamu v zásobách ide do [NeedKind.ASK] (Overiť) — nikdy sa nepridá potichu.
-     * Od zásoby sa odráta to, čo je na sklade (zlučiteľné jednotky).
+     * Vždy doma a známe základné suroviny sa vynechajú; názvy sa porovnávajú cez [key] (paradajka = paradajky).
+     * Od zásoby sa odráta to, čo je na sklade (zlučiteľné jednotky; ks ↔ g cez hmotnosť kusu, ak je známa).
+     * Surovina bez záznamu v zásobách so známou jednotkou ide do [NeedKind.MISSING], s neznámou alebo
+     * neprepočítateľnou do [NeedKind.ASK] (Overiť).
+     * Položka, ktorá už je v cieľovom zozname (nekúpená): ak má dosť (alebo množstvo nie je napísané) → [NeedKind.ALREADY],
+     * ak má v zozname menej, než treba → [NeedKind.TOPUP] (zvýšiť na potrebné množstvo).
      */
     fun planShopping(
         from: LocalDate,
@@ -522,36 +661,144 @@ object Meals {
         target: ShopListKind = ShopListKind.SHARED,
     ): List<ShopNeed> {
         val stock = pantry.filter { !it.deleted }
-        val alreadyNames = shopItems
-            .filter { !it.deleted && !it.done && it.list == target }
-            .map { parseAmount(it.name) }
-            .filter { it.name.isNotBlank() }
-            .associateBy { fold(it.name) }
+        val onList = LinkedHashMap<String, OnList>()
+        for (it in shopItems.filter { !it.deleted && !it.done && it.list == target }) {
+            val (parsed, explicit) = parseInternal(it.name)
+            if (parsed.name.isBlank()) continue
+            onList.putIfAbsent(key(parsed.name), OnList(it, parsed, explicit))
+        }
         val out = ArrayList<ShopNeed>()
         for (line in neededForRange(from, to, meals, recipes)) {
             if (isStaple(line.name)) continue
-            val key = fold(line.name)
-            val item = stock.firstOrNull { fold(it.name) == key }
+            val k = key(line.name)
+            val item = stock.firstOrNull { key(it.name) == k }
             if (item?.always == true) continue
-            if (alreadyNames.containsKey(key)) {
-                out += ShopNeed(line.name, line.amount, line.unit, NeedKind.ALREADY, line.sources)
-                continue
-            }
+            var kind: NeedKind
+            var qty = nice(Qty(line.amount, line.unit))
             if (item == null) {
-                val kind = if (isKnownUnit(line.unit)) NeedKind.MISSING else NeedKind.ASK
-                out += ShopNeed(line.name, line.amount, line.unit, kind, line.sources)
+                kind = if (isKnownUnit(line.unit)) NeedKind.MISSING else NeedKind.ASK
+            } else {
+                val have = stockBaseFor(item, line.unit)
+                if (have == null) {
+                    kind = NeedKind.ASK
+                } else {
+                    val needBase = toBase(line.amount, line.unit)
+                    if (have + 1e-6 >= needBase) continue
+                    val missBase = needBase - have
+                    val fam = family(line.unit)
+                    qty = if (fam == "ks") Qty(if (family(item.unit) != fam) roundKsUp(missBase) else missBase, "ks") else pretty(missBase, fam)
+                    if (qty.amount <= 1e-6) continue
+                    kind = NeedKind.MISSING
+                }
+            }
+            val listed = onList[k]
+            if (listed != null) {
+                val comparable = listed.explicit && isKnownUnit(qty.unit) && canMerge(listed.parsed.unit, qty.unit)
+                if (comparable && !enough(listed.parsed.amount, listed.parsed.unit, qty.amount, qty.unit)) {
+                    out += ShopNeed(
+                        listed.parsed.name, qty.amount, qty.unit, NeedKind.TOPUP, line.sources,
+                        itemId = listed.item.id,
+                        newText = formatShop(listed.parsed.name, qty.amount, qty.unit),
+                        note = "Na zozname je ${formatQty(listed.parsed.amount, listed.parsed.unit)}",
+                        parts = line.parts,
+                    )
+                } else {
+                    out += ShopNeed(line.name, qty.amount, qty.unit, NeedKind.ALREADY, line.sources, itemId = listed.item.id, parts = line.parts)
+                }
                 continue
             }
-            if (!canMerge(item.unit, line.unit)) {
-                out += ShopNeed(line.name, line.amount, line.unit, NeedKind.ASK, line.sources)
-                continue
-            }
-            if (enough(item.amount, item.unit, line.amount, line.unit)) continue
-            val miss = subQty(item.amount, item.unit, line.amount, line.unit)
-            if (miss.amount <= 1e-6) continue
-            out += ShopNeed(line.name, miss.amount, miss.unit, NeedKind.MISSING, line.sources)
+            out += ShopNeed(line.name, qty.amount, qty.unit, kind, line.sources, parts = line.parts)
         }
         return out
+    }
+
+    // ── návrhy surovín pri písaní receptu ───────────────────────────────────
+
+    /** Známa surovina: obvyklé písanie názvu a jednotka, v akej sa používa. */
+    data class Known(val name: String, val unit: String, val uses: Int)
+
+    /**
+     * Suroviny, ktoré už appka pozná: z receptov (najčastejšia jednotka), zásob a histórie nákupov. Zhoda cez [key],
+     * takže „paradajky“ a „paradajka“ sú jedna surovina. Najpoužívanejšie hore.
+     */
+    fun knownIngredients(recipes: List<Recipe>, pantry: List<PantryItem>, shopNames: List<String>): List<Known> {
+        class Acc(var name: String, val units: MutableMap<String, Int>, var uses: Int)
+        val byKey = LinkedHashMap<String, Acc>()
+        fun add(name: String, unit: String, weight: Int) {
+            val n = name.trim()
+            if (n.isEmpty() || isFuzzy(unit)) return
+            val k = key(n)
+            if (k.isEmpty()) return
+            val u = if (unit.trim().lowercase() in UNIT_ALIASES) canonicalUnit(unit) else "ks"
+            val acc = byKey.getOrPut(k) { Acc(n, LinkedHashMap(), 0) }
+            acc.units[u] = (acc.units[u] ?: 0) + weight
+            acc.uses += weight
+        }
+        for (r in recipes.filter { !it.deleted }) for (i in r.ingredients) add(i.name, i.unit, 3)
+        for (p in pantry.filter { !it.deleted && !it.always }) add(p.name, p.unit, 2)
+        for (raw in shopNames) {
+            val (parsed, explicit) = parseInternal(raw)
+            if (parsed.name.isNotBlank()) add(parsed.name, if (explicit) parsed.unit else "ks", 1)
+        }
+        return byKey.values
+            .map { a -> Known(a.name, a.units.maxByOrNull { it.value }?.key ?: "ks", a.uses) }
+            .sortedWith(compareByDescending<Known> { it.uses }.thenBy { fold(it.name) })
+    }
+
+    /** Návrhy podľa napísaného začiatku názvu (alebo začiatku niektorého slova), najviac [limit]. */
+    fun suggestIngredients(query: String, known: List<Known>, limit: Int = 4): List<Known> {
+        val q = fold(query).trim()
+        if (q.length < 2) return emptyList()
+        val qk = key(query)
+        val hits = known.filter { k ->
+            val f = fold(k.name)
+            f.startsWith(q) || f.split(' ').any { it.startsWith(q) } || (qk.isNotEmpty() && key(k.name).startsWith(qk))
+        }
+        return hits.sortedWith(compareByDescending<Known> { fold(it.name).startsWith(q) }.thenByDescending { it.uses }).take(limit)
+    }
+
+    /** Stačí zásoba [item] na [amount] [unit]? null = nedá sa porovnať (g ↔ ks bez známej hmotnosti kusu). */
+    fun covers(item: PantryItem, amount: Double, unit: String): Boolean? {
+        val have = stockBaseFor(item, unit) ?: return null
+        return have + 1e-6 >= toBase(amount, unit)
+    }
+
+    /** Krátky text do oznámenia: „Chýba: múka 500 g, mlieko 1 l (+2)“. */
+    fun needsSummary(needs: List<ShopNeed>): String {
+        val names = needs.map { it.shopText() }
+        return when {
+            names.isEmpty() -> ""
+            names.size <= 2 -> "Chýba: " + names.joinToString(", ")
+            else -> "Chýba: ${names[0]}, ${names[1]} (+${names.size - 2})"
+        }
+    }
+
+    // ── Uvarené? ────────────────────────────────────────────────────────────
+
+    /** Dokedy sa jedlo v danom čase dňa „stihlo“ uvariť (potom sa pýtame, či sa varilo). */
+    fun slotEnd(slot: Slot): java.time.LocalTime = when (slot) {
+        Slot.BREAKFAST -> java.time.LocalTime.of(10, 0)
+        Slot.LUNCH -> java.time.LocalTime.of(15, 0)
+        Slot.DINNER -> java.time.LocalTime.of(21, 0)
+    }
+
+    /** Kolko dní spätne sa pýtame „Uvarené?“; staršie jedlá už nikto nepotvrdí. */
+    const val ASK_BACK_DAYS = 3L
+
+    /**
+     * Jedlá, o ktorých treba zistiť, či sa uvarili: s receptom, neuvarené a neodpovedané, ktorých čas už prešiel
+     * (včera a skôr; dnes podľa [slotEnd]), najviac [ASK_BACK_DAYS] dní dozadu. Od najstaršieho.
+     */
+    fun pendingCooked(meals: List<Meal>, recipes: List<Recipe>, today: LocalDate, now: java.time.LocalTime): List<Meal> {
+        val ids = recipes.filter { !it.deleted }.map { it.id }.toSet()
+        return meals.filter { !it.deleted && !it.cooked && !it.skipped && it.recipeId.isNotEmpty() && it.recipeId in ids }
+            .mapNotNull { m ->
+                val d = runCatching { LocalDate.parse(m.date) }.getOrNull() ?: return@mapNotNull null
+                val due = d.isBefore(today) || (d == today && !now.isBefore(slotEnd(m.slot)))
+                if (!due || d.isBefore(today.minusDays(ASK_BACK_DAYS))) null else m to d
+            }
+            .sortedWith(compareBy({ it.second }, { it.first.slot.order }))
+            .map { it.first }
     }
 
     fun mealOn(meals: List<Meal>, date: LocalDate, slot: Slot): Meal? =
@@ -632,6 +879,7 @@ object Meals {
         .put("c", JSONArray(m.cookIds))
         .put("p", m.portions)
         .put("k", m.cooked)
+        .put("sk", m.skipped)
         .put("ts", m.updatedAt)
         .put("x", m.deleted)
         .put("dv", m.deviceId)
@@ -644,6 +892,8 @@ object Meals {
         .put("w", p.always)
         .put("e", p.expires ?: "")
         .put("l", p.lowAt)
+        .put("pg", p.pieceG)
+        .put("pk", p.pack)
         .put("ts", p.updatedAt)
         .put("x", p.deleted)
         .put("dv", p.deviceId)
@@ -684,6 +934,7 @@ object Meals {
             cookIds = cooks,
             portions = o.optInt("p"),
             cooked = o.optBoolean("k"),
+            skipped = o.optBoolean("sk"),
             updatedAt = o.optLong("ts"),
             deleted = o.optBoolean("x"),
             deviceId = o.optString("dv"),
@@ -702,6 +953,8 @@ object Meals {
             always = o.optBoolean("w"),
             expires = exp,
             lowAt = o.optDouble("l", 0.0),
+            pieceG = o.optDouble("pg", 0.0),
+            pack = o.optDouble("pk", 0.0),
             updatedAt = o.optLong("ts"),
             deleted = o.optBoolean("x"),
             deviceId = o.optString("dv"),

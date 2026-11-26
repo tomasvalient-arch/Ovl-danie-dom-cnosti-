@@ -41,7 +41,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,14 +61,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.Locale
@@ -97,6 +105,11 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
     var recipesOpen by remember { mutableStateOf(false) }
     var saveEditor by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pickRecipeId by remember { mutableStateOf<String?>(null) }
+    var links by remember { mutableStateOf(MealsStore.links(context)) }
+    var shopDay by remember { mutableStateOf(MealsStore.shopDay(context)) }
+    var promptOn by remember { mutableStateOf(MealsStore.promptEnabled(context)) }
+    var importOpen by remember { mutableStateOf(false) }
+    var suggestOpen by remember { mutableStateOf(false) }
 
     fun reload() {
         recipes = MealsStore.liveRecipes(context)
@@ -105,6 +118,9 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
         shop = ShoppingStore.items(context)
         people = MealsStore.people(context)
         syncText = HouseSyncEngine.statusText(context)
+        links = MealsStore.links(context)
+        shopDay = MealsStore.shopDay(context)
+        promptOn = MealsStore.promptEnabled(context)
         openMeal = openMeal?.let { id -> meals.firstOrNull { it.id == id.id } }
         openRecipe = openRecipe?.let { r -> recipes.firstOrNull { it.id == r.id } }
     }
@@ -124,11 +140,38 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
     val names = people.associate { it.id to it.name }
     val today = LocalDate.now()
     val fillFrom = today
-    val fillTo = Meals.fillUntil(today)
-    val plan = remember(meals, recipes, pantry, shop, today) {
-        Meals.planShopping(fillFrom, fillTo, meals, recipes, pantry, shop, ShopListKind.SHARED)
+    val fillTo = Meals.fillUntil(today, shopDay)
+    val plan = remember(meals, recipes, pantry, shop, today, links, shopDay) {
+        MealShop.reconcile(fillFrom, fillTo, meals, recipes, pantry, shop, ShopListKind.SHARED, links)
     }
-    val missingCount = plan.count { it.kind == Meals.NeedKind.MISSING }
+    val missingCount = plan.count { it.kind == Meals.NeedKind.MISSING || it.kind == Meals.NeedKind.TOPUP }
+    val staleCount = plan.count { it.kind == Meals.NeedKind.STALE }
+    val pending = Meals.pendingCooked(meals, recipes, today, java.time.LocalTime.now())
+    val known = remember(recipes, pantry) {
+        Meals.knownIngredients(recipes, pantry, runCatching { ShoppingStore.history(context).map { it.name } }.getOrDefault(emptyList()))
+    }
+    val clipboard = LocalClipboardManager.current
+
+    /** Po uložení jedla do plánu: ak niečo chýba, ponúkne pridanie do nákupu (jedno ťuknutie = potvrdenie). */
+    fun nudgeShopping(meal: Meals.Meal) {
+        val d = runCatching { LocalDate.parse(meal.date) }.getOrNull() ?: return
+        if (d.isBefore(today) || meal.recipeId.isEmpty()) return
+        val freshMeals = MealsStore.liveMeals(context)
+        val needs = MealShop.reconcile(
+            fillFrom, if (d.isAfter(fillTo)) d else fillTo, freshMeals, MealsStore.liveRecipes(context),
+            MealsStore.livePantry(context), ShoppingStore.items(context), ShopListKind.SHARED, MealsStore.links(context),
+        ).filter { n -> (n.kind == Meals.NeedKind.MISSING || n.kind == Meals.NeedKind.TOPUP) && n.parts.any { it.mealId == meal.id } }
+        if (needs.isEmpty()) return
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val r = snackbar.showSnackbar(Meals.needsSummary(needs), actionLabel = "Pridať", withDismissAction = true, duration = SnackbarDuration.Long)
+            if (r == SnackbarResult.ActionPerformed) {
+                val n = MealsStore.applyShopping(context, needs, ShopListKind.SHARED)
+                reload()
+                snackbar.showSnackbar(if (n > 0) "Do nákupu: $n" else "Nákup sa nezmenil")
+            }
+        }
+    }
 
     fun goBack() {
         when {
@@ -211,6 +254,7 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
             when {
                 editingRecipe != null -> RecipeEditor(
                     initial = editingRecipe!!,
+                    known = known,
                     isNew = recipes.none { it.id == editingRecipe!!.id },
                     onCancel = { editingRecipe = null },
                     onRegisterSave = { saveEditor = it },
@@ -244,7 +288,8 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
                     onPortions = { p ->
                         val meal = openMeal
                         if (meal != null) {
-                            MealsStore.saveMeal(context, meal.copy(portions = p, cooked = false))
+                            // uvarené ostane uvarené: zásoby sa už odrátali a druhýkrát sa neodrátajú
+                            MealsStore.saveMeal(context, meal.copy(portions = p))
                         } else {
                             MealsStore.saveRecipe(context, openRecipe!!.copy(portions = p))
                         }
@@ -255,6 +300,13 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
                         if (MealsStore.markCooked(context, meal)) {
                             reload()
                             scope.launch { snackbar.showSnackbar("Odrátané zo zásob") }
+                        }
+                    },
+                    onSkip = {
+                        val meal = openMeal ?: return@RecipeDetail
+                        if (MealsStore.skipMeal(context, meal)) {
+                            reload()
+                            scope.launch { snackbar.showSnackbar("Jedlo sa nevarilo, do nákupu ho už nerátame") }
                         }
                     },
                     onFill = {
@@ -273,6 +325,7 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
                     onOpen = { openMeal = null; openRecipe = it },
                     onEdit = { editingRecipe = it },
                     onNew = { startNewRecipe() },
+                    onImport = { importOpen = true },
                 )
                 pantryOpen -> PantryPage(
                     items = pantry,
@@ -289,6 +342,36 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
                     names = names,
                     syncText = syncText,
                     missingCount = missingCount,
+                    staleCount = staleCount,
+                    pending = pending,
+                    promptOn = promptOn,
+                    onPrompt = { MealsStore.setPromptEnabled(context, it); promptOn = it },
+                    onAnswer = { meal, yes ->
+                        if (yes) {
+                            if (MealsStore.markCooked(context, meal)) scope.launch { snackbar.showSnackbar("Odrátané zo zásob") }
+                        } else {
+                            MealsStore.skipMeal(context, meal)
+                        }
+                        reload()
+                    },
+                    onSuggest = { suggestOpen = true },
+                    onCopyPrev = {
+                        val copy = MealPlanner.copyWeek(monday.minusDays(7), monday, meals, today)
+                        if (copy.isEmpty()) {
+                            scope.launch { snackbar.showSnackbar("Nie je čo skopírovať: minulý týždeň je prázdny alebo je všetko už obsadené") }
+                        } else {
+                            MealsStore.saveMeals(context, copy)
+                            reload()
+                            scope.launch {
+                                snackbar.currentSnackbarData?.dismiss()
+                                val r = snackbar.showSnackbar("Skopírované z minulého týždňa: ${copy.size}", actionLabel = "Späť", duration = SnackbarDuration.Long)
+                                if (r == SnackbarResult.ActionPerformed) {
+                                    copy.forEach { MealsStore.deleteMeal(context, it.id) }
+                                    reload()
+                                }
+                            }
+                        }
+                    },
                     onPrev = { monday = monday.minusDays(7) },
                     onNext = { monday = monday.plusDays(7) },
                     onOpen = { meal, recipe -> openMeal = meal; openRecipe = recipe },
@@ -313,21 +396,34 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
                 onNew = { startNewRecipe() },
                 onEdit = { editingRecipe = it },
                 onPick = { recipe, cooks, portions ->
-                    MealsStore.saveMeal(
-                        context,
-                        Meals.Meal(
-                            id = Meals.mealId(day.toString(), slot),
-                            date = day.toString(),
-                            slot = slot,
-                            recipeId = recipe.id,
-                            title = recipe.name,
-                            cookIds = cooks,
-                            portions = portions,
-                        ),
+                    val meal = Meals.Meal(
+                        id = Meals.mealId(day.toString(), slot),
+                        date = day.toString(),
+                        slot = slot,
+                        recipeId = recipe.id,
+                        title = recipe.name,
+                        cookIds = cooks,
+                        portions = portions,
                     )
+                    MealsStore.saveMeal(context, meal)
                     pickFor = null
                     pickRecipeId = null
                     reload()
+                    nudgeShopping(meal)
+                },
+                onOut = {
+                    MealsStore.saveMeal(context, MealPlanner.outMeal(day, slot))
+                    pickFor = null
+                    pickRecipeId = null
+                    reload()
+                },
+                onClear = currentMeal?.let { m ->
+                    {
+                        MealsStore.deleteMeal(context, m.id)
+                        pickFor = null
+                        pickRecipeId = null
+                        reload()
+                    }
                 },
             )
         }
@@ -336,21 +432,67 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
     if (showFill) {
         val focusMeal = fillForMeal
         val needs = if (focusMeal != null) {
+            // jedno jedlo: celkové potreby (so všetkými naplánovanými jedlami), ktorých sa toto jedlo týka
             val d = runCatching { LocalDate.parse(focusMeal.date) }.getOrDefault(today)
-            Meals.planShopping(d, d, listOf(focusMeal), recipes, pantry, shop, ShopListKind.SHARED)
+            MealShop.reconcile(fillFrom, if (d.isAfter(fillTo)) d else fillTo, meals, recipes, pantry, shop, ShopListKind.SHARED, links)
+                .filter { n -> n.kind != Meals.NeedKind.STALE && n.parts.any { it.mealId == focusMeal.id } }
         } else {
-            Meals.planShopping(fillFrom, fillTo, meals, recipes, pantry, shop, ShopListKind.SHARED)
+            plan
         }
         FillShopSheet(
             needs = needs,
+            subtitle = if (focusMeal != null) "Čo treba na toto jedlo (so všetkými jedlami v pláne)" else "Súčet chýbajúceho od dnes ${Meals.rangeLabel(fillFrom, fillTo)}",
+            shopDay = if (focusMeal != null) null else shopDay,
+            onShopDay = { MealsStore.setShopDay(context, it); shopDay = it },
             onDismiss = { showFill = false; fillForMeal = null },
             onAdd = { items, target ->
-                for (n in items) ShoppingStore.add(context, n.shopText(), target)
+                val changed = MealsStore.applyShopping(context, items, target)
                 showFill = false
                 fillForMeal = null
                 reload()
                 val dest = if (target == ShopListKind.SHARED) "spoločného" else "môjho"
-                scope.launch { snackbar.showSnackbar("Pridané do $dest: ${items.size}") }
+                val adds = items.count { it.kind == Meals.NeedKind.MISSING || it.kind == Meals.NeedKind.ASK }
+                val text = if (items.all { it.kind == Meals.NeedKind.MISSING || it.kind == Meals.NeedKind.ASK }) "Pridané do $dest: $changed" else "Nákup upravený: $changed (nových $adds)"
+                scope.launch { snackbar.showSnackbar(text) }
+            },
+        )
+    }
+
+    if (suggestOpen) {
+        SuggestSheet(
+            monday = monday,
+            today = today,
+            meals = meals,
+            recipes = recipes,
+            onDismiss = { suggestOpen = false },
+            onSave = { list ->
+                suggestOpen = false
+                val toSave = list.mapNotNull { sg ->
+                    val r = recipes.firstOrNull { it.id == sg.recipeId } ?: return@mapNotNull null
+                    Meals.Meal(Meals.mealId(sg.date.toString(), sg.slot), sg.date.toString(), sg.slot, recipeId = r.id, title = r.name, portions = 0)
+                }
+                MealsStore.saveMeals(context, toSave)
+                reload()
+                scope.launch {
+                    snackbar.currentSnackbarData?.dismiss()
+                    val first = snackbar.showSnackbar("Do plánu pridané: ${toSave.size}. Chýbajúce sa dá pridať do nákupu tlačidlom dole.", actionLabel = "Späť", duration = SnackbarDuration.Long)
+                    if (first == SnackbarResult.ActionPerformed) {
+                        toSave.forEach { MealsStore.deleteMeal(context, it.id) }
+                        reload()
+                    }
+                }
+            },
+        )
+    }
+
+    if (importOpen) {
+        ImportRecipeDialog(
+            known = known,
+            clipboardText = { clipboard.getText()?.text.orEmpty() },
+            onDismiss = { importOpen = false },
+            onParsed = { r ->
+                importOpen = false
+                editingRecipe = Meals.Recipe(id = Meals.newRecipeId(), name = r.title, portions = r.portions, ingredients = r.ingredients)
             },
         )
     }
@@ -365,6 +507,13 @@ private fun WeekPage(
     names: Map<String, String>,
     syncText: String,
     missingCount: Int,
+    staleCount: Int,
+    pending: List<Meals.Meal>,
+    promptOn: Boolean,
+    onPrompt: (Boolean) -> Unit,
+    onAnswer: (Meals.Meal, Boolean) -> Unit,
+    onSuggest: () -> Unit,
+    onCopyPrev: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onOpen: (Meals.Meal, Meals.Recipe) -> Unit,
@@ -385,6 +534,34 @@ private fun WeekPage(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        if (pending.isNotEmpty()) {
+            val recipeNames = recipes.associate { it.id to it.name }
+            DomovCard(padding = 12.dp, spacing = 4.dp) {
+                Text("Varilo sa?", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text("Áno odpočíta suroviny zo zásob, Nie ich nechá a jedlo preskočí.", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                pending.take(4).forEach { m ->
+                    val d = runCatching { LocalDate.parse(m.date) }.getOrNull()
+                    val day = when (d) {
+                        today -> "Dnes"
+                        today.minusDays(1) -> "Včera"
+                        null -> m.date
+                        else -> Meals.dayLabel(d)
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "$day · ${m.slot.title.lowercase()}: ${m.title.ifBlank { recipeNames[m.recipeId].orEmpty() }}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        TextButton(onClick = { onAnswer(m, true) }) { Text("Áno", fontWeight = FontWeight.SemiBold) }
+                        TextButton(onClick = { onAnswer(m, false) }) { Text("Nie") }
+                    }
+                }
+                if (pending.size > 4) Text("a ďalšie: ${pending.size - 4}", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+            }
+        }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onPrev) { Icon(Sym.arrowBack, contentDescription = "Predošlý týždeň") }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -395,6 +572,10 @@ private fun WeekPage(
         }
         if (syncText.isNotBlank()) {
             Text(syncText, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
+        }
+        FlowRow(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            FilterChip(selected = false, onClick = onSuggest, label = { Text("Navrhnúť týždeň") })
+            FilterChip(selected = false, onClick = onCopyPrev, label = { Text("Ako minulý týždeň") })
         }
         Row(Modifier.fillMaxWidth().padding(start = 32.dp, end = 2.dp, bottom = 0.dp)) {
             Meals.Slot.PLAN.forEach { slot ->
@@ -413,8 +594,19 @@ private fun WeekPage(
                 onPick = onPick,
             )
         }
-        val cta = if (missingCount > 0) "Doplniť nákup · chýba $missingCount" else "Doplniť nákup"
+        val cta = when {
+            missingCount > 0 -> "Doplniť nákup · chýba $missingCount"
+            staleCount > 0 -> "Upraviť nákup · plán sa zmenil"
+            else -> "Doplniť nákup"
+        }
         MealsCta(cta, icon = CartIcon, onClick = onFill)
+        CheckRow(
+            title = "Večer sa opýtať, či sa varilo",
+            caption = "Oznámenie o 21:00 s tlačidlami Áno a Nie; Áno odpočíta zásoby",
+            checked = promptOn,
+            verticalPadding = 4.dp,
+            onChange = onPrompt,
+        )
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -466,6 +658,7 @@ private fun MealCell(
 ) {
     val scheme = MaterialTheme.colorScheme
     val recipe = meal?.let { m -> recipes.firstOrNull { it.id == m.recipeId } }
+    val out = meal != null && meal.recipeId.isEmpty() && meal.title.isNotBlank()
     Surface(
         onClick = {
             if (meal != null && recipe != null) onOpen(meal, recipe)
@@ -477,7 +670,17 @@ private fun MealCell(
         border = BorderStroke(1.dp, scheme.surfaceVariant),
     ) {
         Column(Modifier.padding(horizontal = 5.dp, vertical = 5.dp), verticalArrangement = Arrangement.Center) {
-            if (meal == null || recipe == null) {
+            if (meal != null && out) {
+                Text(
+                    meal.title,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = scheme.onSurfaceVariant,
+                )
+                Text("bez varenia", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
+            } else if (meal == null || recipe == null) {
                 Text("+ Pridať", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
             } else {
                 Text(
@@ -486,10 +689,13 @@ private fun MealCell(
                     fontWeight = FontWeight.Medium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    color = if (meal.cooked) scheme.onSurfaceVariant else scheme.onSurface,
+                    color = if (meal.cooked || meal.skipped) scheme.onSurfaceVariant else scheme.onSurface,
+                    textDecoration = if (meal.skipped) TextDecoration.LineThrough else null,
                 )
                 val who = Meals.cookLabel(meal.cookIds, names)
-                if (who.isNotBlank()) {
+                if (meal.skipped) {
+                    Text("Nevarilo sa", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
+                } else if (who.isNotBlank()) {
                     Text(if (meal.cooked) "Uvarené · $who" else who, style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 } else if (meal.cooked) {
                     Text("Uvarené", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
@@ -507,6 +713,7 @@ private fun RecipeDetail(
     names: Map<String, String>,
     onPortions: (Int) -> Unit,
     onCooked: () -> Unit,
+    onSkip: () -> Unit,
     onFill: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -517,13 +724,11 @@ private fun RecipeDetail(
     val fuzzy = scaled.filter { Meals.isFuzzy(it.unit) }
     val rows = scaled.filter { !Meals.isFuzzy(it.unit) }.map { ing ->
         if (Meals.isStaple(ing.name)) return@map Row(ing, true, "vždy doma")
-        val stock = pantry.firstOrNull { Meals.fold(it.name) == Meals.fold(ing.name) }
+        val stock = pantry.firstOrNull { Meals.key(it.name) == Meals.key(ing.name) }
         when {
             stock?.always == true -> Row(ing, true, "vždy doma")
             stock == null -> Row(ing, false, Meals.formatQty(ing.amount, ing.unit))
-            !Meals.canMerge(stock.unit, ing.unit) -> Row(ing, false, Meals.formatQty(ing.amount, ing.unit))
-            Meals.enough(stock.amount, stock.unit, ing.amount, ing.unit) ->
-                Row(ing, true, Meals.formatQty(stock.amount, stock.unit))
+            Meals.covers(stock, ing.amount, ing.unit) == true -> Row(ing, true, Meals.formatQty(stock.amount, stock.unit))
             else -> Row(ing, false, Meals.formatQty(ing.amount, ing.unit))
         }
     }
@@ -539,6 +744,7 @@ private fun RecipeDetail(
         Text(recipe.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         val sub = buildString {
             if (cooked) append("Uvarené")
+            if (meal?.skipped == true) append("Nevarilo sa")
             if (who.isNotBlank()) { if (isNotEmpty()) append(" · "); append("Varí $who") }
             if (meal != null) { if (isNotEmpty()) append(" · "); append("z jedálnička") }
         }
@@ -592,8 +798,13 @@ private fun RecipeDetail(
             if (meal != null && !meal.cooked) {
                 MealsCta("Uvarené", icon = Sym.skillet, ghost = true, modifier = Modifier.weight(1f), onClick = onCooked)
             }
-            if (miss.isNotEmpty()) {
+            if (miss.isNotEmpty() && meal?.skipped != true) {
                 MealsCta("Doplniť chýbajúce", icon = CartIcon, modifier = Modifier.weight(1f), onClick = onFill)
+            }
+        }
+        if (meal != null && !meal.cooked && !meal.skipped) {
+            TextButton(onClick = onSkip, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Text("Nevarilo sa")
             }
         }
         if (meal != null) {
@@ -624,6 +835,7 @@ private fun IngLine(name: String, note: String, have: Boolean) {
 @Composable
 private fun RecipeEditor(
     initial: Meals.Recipe,
+    known: List<Meals.Known>,
     isNew: Boolean,
     onCancel: () -> Unit,
     onSave: (Meals.Recipe) -> Unit,
@@ -677,6 +889,23 @@ private fun RecipeEditor(
             ings.forEachIndexed { i, ing ->
                 DomovCard(padding = 10.dp, spacing = 8.dp) {
                     DomovTextField(value = ing.name, onValueChange = { v -> ings = ings.toMutableList().also { it[i] = ing.copy(name = v) } }, label = { Text("Surovina") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    val hints = if (ing.name.trim().length >= 2) {
+                        Meals.suggestIngredients(ing.name, known, 4)
+                            .filter { k -> !(k.name == ing.name.trim() && Meals.canonicalUnit(ing.unit) == k.unit) }
+                    } else {
+                        emptyList()
+                    }
+                    if (hints.isNotEmpty()) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                            hints.forEach { k ->
+                                FilterChip(
+                                    selected = false,
+                                    onClick = { ings = ings.toMutableList().also { it[i] = ing.copy(name = k.name, unit = k.unit, amount = if (ing.amount > 0.0) ing.amount else 1.0) } },
+                                    label = { Text("${k.name} · ${k.unit}") },
+                                )
+                            }
+                        }
+                    }
                     if (!Meals.isFuzzy(ing.unit)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             DomovTextField(
@@ -846,6 +1075,7 @@ private fun PantryEditDialog(
     var unit by remember { mutableStateOf(initial?.unit ?: "ks") }
     var always by remember { mutableStateOf(initial?.always == true) }
     var expires by remember { mutableStateOf(initial?.expires) }
+    var pieceG by remember { mutableStateOf(initial?.pieceG?.takeIf { it > 0.0 }?.let { Meals.fmtNum(it) } ?: "") }
     var pickExp by remember { mutableStateOf(false) }
     DomovAlert(
         onDismissRequest = onDismiss,
@@ -868,6 +1098,17 @@ private fun PantryEditDialog(
                         }
                     }
                 }
+                if (!always && (unit == "g" || unit == "kg")) {
+                    DomovTextField(
+                        value = pieceG,
+                        onValueChange = { pieceG = it },
+                        label = { Text("1 ks váži (g) – nepovinné") },
+                        supportingText = { Text("Aby „2 ks cibule“ z receptu sedelo so zásobou v gramoch") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 CheckRow("Vždy doma", "Do nákupu sa nepridáva", always) { always = it }
                 TextButton(onClick = { pickExp = true }) {
                     Text(expires?.let { d -> runCatching { LocalDate.parse(d) }.getOrNull()?.let { "Spotreba do ${Meals.formatDateYear(it)}" } } ?: "Pridať dátum spotreby")
@@ -886,6 +1127,7 @@ private fun PantryEditDialog(
                         unit = unit,
                         always = always,
                         expires = expires,
+                        pieceG = if (unit == "g" || unit == "kg") Meals.parseNumber(pieceG).coerceAtLeast(0.0) else 0.0,
                     ),
                 )
             }, enabled = name.isNotBlank()) { Text("Uložiť") }
@@ -927,6 +1169,8 @@ private fun MealPickerSheet(
     onNew: () -> Unit,
     onEdit: (Meals.Recipe) -> Unit,
     onPick: (Meals.Recipe, List<String>, Int) -> Unit,
+    onOut: () -> Unit,
+    onClear: (() -> Unit)?,
 ) {
     val scheme = MaterialTheme.colorScheme
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1012,6 +1256,10 @@ private fun MealPickerSheet(
                     }
                 }
                 TextButton(onClick = { afterHide(onNew) }) { Text("Nový recept") }
+                TextButton(onClick = { afterHide(onOut) }) { Text("Jeme vonku / bez varenia") }
+                if (onClear != null) {
+                    TextButton(onClick = { afterHide(onClear) }) { Text("Vymazať z plánu", color = scheme.error) }
+                }
                 if (rec != null) {
                     Text(
                         "Recept je pre ${Meals.portionsText(rec.portions)}",
@@ -1044,6 +1292,7 @@ private fun RecipesPage(
     onOpen: (Meals.Recipe) -> Unit,
     onEdit: (Meals.Recipe) -> Unit,
     onNew: () -> Unit,
+    onImport: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(
@@ -1054,8 +1303,9 @@ private fun RecipesPage(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (recipes.isEmpty()) {
-            Text("Zatiaľ žiadny recept. Pridaj ho tlačidlom Nový.", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+            Text("Zatiaľ žiadny recept. Pridaj ho tlačidlom Nový, alebo vlož text receptu či odkaz.", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
             MealsCta("Nový recept", onClick = onNew)
+            MealsCta("Vložiť recept z textu alebo odkazu", ghost = true, onClick = onImport)
         } else {
             recipes.forEach { r ->
                 Surface(
@@ -1085,6 +1335,7 @@ private fun RecipesPage(
                 }
             }
             TextButton(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("Nový recept") }
+            TextButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("Vložiť recept z textu alebo odkazu") }
         }
         Spacer(Modifier.height(16.dp))
     }
@@ -1094,19 +1345,27 @@ private fun RecipesPage(
 @Composable
 private fun FillShopSheet(
     needs: List<Meals.ShopNeed>,
+    subtitle: String,
+    /** null = výber dňa nákupu sa neukazuje (jedno jedlo). */
+    shopDay: Int?,
+    onShopDay: (Int) -> Unit,
     onDismiss: () -> Unit,
     onAdd: (List<Meals.ShopNeed>, ShopListKind) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     var target by remember { mutableStateOf(ShopListKind.SHARED) }
-    var checked by remember {
-        mutableStateOf(needs.filter { it.kind != Meals.NeedKind.ALREADY }.associate { it.shopText() to (it.kind == Meals.NeedKind.MISSING) }.toMutableMap())
+    // všetko okrem „Už v zozname“ je predvolene zaškrtnuté; ťuknutím sa dá odškrtnúť. Pri zmene podkladov (deň nákupu) sa výber obnoví.
+    var checked by remember(needs.map { it.uiKey() }) {
+        mutableStateOf(needs.filter { it.kind != Meals.NeedKind.ALREADY }.associate { it.uiKey() to true }.toMutableMap())
     }
     val missing = needs.filter { it.kind == Meals.NeedKind.MISSING }
+    val topup = needs.filter { it.kind == Meals.NeedKind.TOPUP }
+    val stale = needs.filter { it.kind == Meals.NeedKind.STALE }
     val already = needs.filter { it.kind == Meals.NeedKind.ALREADY }
     val ask = needs.filter { it.kind == Meals.NeedKind.ASK }
-    val selected = needs.filter { it.kind != Meals.NeedKind.ALREADY && checked[it.shopText()] == true }
+    val selected = needs.filter { it.kind != Meals.NeedKind.ALREADY && checked[it.uiKey()] == true }
     val dest = if (target == ShopListKind.SHARED) "spoločného" else "môjho"
+    val onlyAdds = selected.all { it.kind == Meals.NeedKind.MISSING || it.kind == Meals.NeedKind.ASK }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = scheme.surfaceContainerHigh,
@@ -1121,20 +1380,36 @@ private fun FillShopSheet(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("Pridať do nákupu", style = MaterialTheme.typography.titleLarge)
-            Text("Súčet chýbajúceho od dnes do nedele", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+            if (shopDay != null) {
+                Text("Nakupujem v", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                    FilterChip(selected = shopDay == 0, onClick = { onShopDay(0) }, label = { Text("Nenastavené") })
+                    (1..7).forEach { d ->
+                        FilterChip(selected = shopDay == d, onClick = { onShopDay(d) }, label = { Text(Meals.WEEKDAYS[d - 1]) })
+                    }
+                }
+            }
             Segmented(
                 options = listOf("Môj" to null, "Spoločný" to null),
                 selected = if (target == ShopListKind.MINE) 0 else 1,
                 onSelect = { target = if (it == 0) ShopListKind.MINE else ShopListKind.SHARED },
             )
-            if (missing.isEmpty() && ask.isEmpty() && already.isEmpty()) {
-                Text("Na tento týždeň nič nechýba — alebo ešte nie je v pláne žiadne jedlo.", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+            if (needs.isEmpty()) {
+                Text("Nič nechýba — alebo ešte nie je v pláne žiadne jedlo.", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
             }
-            if (missing.isNotEmpty()) NeedSection("Chýba · ${missing.size}", missing, checked, { k, v -> checked = checked.toMutableMap().also { it[k] = v } }, toggleable = true)
-            if (already.isNotEmpty()) NeedSection("Už v zozname", already, emptyMap(), { _, _ -> }, toggleable = false, caption = { "Už v ${if (target == ShopListKind.SHARED) "spoločnom" else "mojom"} zozname" })
-            if (ask.isNotEmpty()) NeedSection("Overiť", ask, checked, { k, v -> checked = checked.toMutableMap().also { it[k] = v } }, toggleable = true, caption = { "Nie je v zásobách · overiť" })
+            val toggle = { k: String, v: Boolean -> checked = checked.toMutableMap().also { it[k] = v } }
+            if (missing.isNotEmpty()) NeedSection("Chýba · ${missing.size}", missing, checked, toggle, toggleable = true)
+            if (topup.isNotEmpty()) NeedSection("Zvýšiť množstvo · ${topup.size}", topup, checked, toggle, toggleable = true, caption = { it.note })
+            if (stale.isNotEmpty()) NeedSection("Už netreba · ${stale.size}", stale, checked, toggle, toggleable = true, caption = { it.note })
+            if (ask.isNotEmpty()) NeedSection("Overiť · ${ask.size}", ask, checked, toggle, toggleable = true, caption = { "Nie je v zásobách alebo nesedí jednotka · odškrtni, ak to máš doma" })
+            if (already.isNotEmpty()) NeedSection("Už v zozname", already, emptyMap(), { _, _ -> }, toggleable = false, caption = { "Už v zozname" })
             MealsCta(
-                if (selected.isEmpty()) "Nič na pridanie" else "Pridať ${selected.size} do $dest",
+                when {
+                    selected.isEmpty() -> "Nič na pridanie"
+                    onlyAdds -> "Pridať ${selected.size} do $dest"
+                    else -> "Použiť ${selected.size} ${if (selected.size == 1) "zmenu" else if (selected.size < 5) "zmeny" else "zmien"}"
+                },
                 icon = CartIcon,
                 enabled = selected.isNotEmpty(),
                 onClick = { onAdd(selected, target) },
@@ -1155,7 +1430,7 @@ private fun NeedSection(
     SectionLabel(title)
     DomovCard(padding = 4.dp, spacing = 0.dp) {
         items.forEach { n ->
-            val key = n.shopText()
+            val key = n.uiKey()
             val on = checked[key] == true
             Row(
                 Modifier
@@ -1165,21 +1440,197 @@ private fun NeedSection(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (toggleable) {
-                    Icon(
-                        if (on) Sym.check else Sym.add,
-                        contentDescription = null,
-                        tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.size(20.dp),
-                    )
+                    TickMark(on)
                     Spacer(Modifier.width(10.dp))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(n.shopText(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(
+                        n.shopText(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        textDecoration = if (n.kind == Meals.NeedKind.STALE && n.newText.isEmpty()) TextDecoration.LineThrough else null,
+                    )
                     val cap = caption(n)
                     if (cap.isNotBlank()) Text(cap, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (n.kind == Meals.NeedKind.MISSING && n.sources.isNotEmpty() && caption(n) != n.sources.joinToString(" · ")) {
+                        Text(n.sources.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
+    }
+}
+
+/** Návrh jedálnička na prázdne miesta v týždni: nič sa neuloží, kým užívateľ nepotvrdí tlačidlom dole. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SuggestSheet(
+    monday: LocalDate,
+    today: LocalDate,
+    meals: List<Meals.Meal>,
+    recipes: List<Meals.Recipe>,
+    onDismiss: () -> Unit,
+    onSave: (List<MealPlanner.Suggestion>) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    var slots by remember { mutableStateOf(setOf(Meals.Slot.LUNCH, Meals.Slot.DINNER)) }
+    var seed by remember { mutableIntStateOf(0) }
+    var off by remember { mutableStateOf(setOf<String>()) }
+    val days = remember(monday) { (0..6).map { monday.plusDays(it.toLong()) } }
+    val empty = remember(days, slots, meals, today) { MealPlanner.emptySlots(days, slots.toList(), meals, today) }
+    val suggestions = remember(empty, meals, recipes, seed) { MealPlanner.suggest(empty, meals, recipes, seed) }
+    val names = remember(recipes) { recipes.associate { it.id to it.name } }
+    val chosen = suggestions.filter { "${it.date}|${it.slot.code}" !in off }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = scheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Navrhnúť týždeň", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Vyplní len prázdne miesta ${Meals.formatWeekRange(monday)}. Uloží sa až po potvrdení.",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                Meals.Slot.PLAN.forEach { sl ->
+                    FilterChip(
+                        selected = sl in slots,
+                        onClick = { slots = if (sl in slots) slots - sl else slots + sl },
+                        label = { Text(sl.title) },
+                    )
+                }
+            }
+            when {
+                recipes.isEmpty() -> Text("Najprv pridaj aspoň jeden recept.", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                slots.isEmpty() -> Text("Vyber aspoň jeden chod.", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                suggestions.isEmpty() -> Text("V tomto týždni nie je čo dopĺňať: všetky vybrané miesta sú obsadené alebo už prešli.", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                else -> DomovCard(padding = 4.dp, spacing = 0.dp) {
+                    suggestions.forEach { sg ->
+                        val key = "${sg.date}|${sg.slot.code}"
+                        val on = key !in off
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { off = if (on) off + key else off - key }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TickMark(on)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    names[sg.recipeId].orEmpty(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (on) scheme.onSurface else scheme.onSurfaceVariant,
+                                    textDecoration = if (on) null else TextDecoration.LineThrough,
+                                )
+                                Text(
+                                    "${Meals.dayLabel(sg.date)} ${sg.date.dayOfMonth}. ${sg.date.monthValue}. · ${sg.slot.title.lowercase()}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if (suggestions.isNotEmpty()) {
+                MealsCta("Zamiešať", ghost = true, onClick = { seed += 1; off = emptySet() })
+            }
+            MealsCta(
+                if (chosen.isEmpty()) "Nič na pridanie" else "Pridať do plánu: ${chosen.size}",
+                enabled = chosen.isNotEmpty(),
+                onClick = { onSave(chosen) },
+            )
+        }
+    }
+}
+
+/**
+ * Import receptu: vložený text (suroviny po riadkoch) alebo odkaz na stránku s receptom. Výsledok sa otvorí v editore,
+ * kde sa dá všetko ešte opraviť, a uloží sa až tam.
+ */
+@Composable
+private fun ImportRecipeDialog(
+    known: List<Meals.Known>,
+    clipboardText: () -> String,
+    onDismiss: () -> Unit,
+    onParsed: (RecipeImport.Result) -> Unit,
+) {
+    var text by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val url = RecipeImport.asUrl(text)
+    fun go() {
+        if (busy) return
+        error = null
+        if (url != null) {
+            busy = true
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val r = Http.send("GET", url, headers = mapOf("User-Agent" to "Mozilla/5.0 (Android) Domov", "Accept-Language" to "sk,cs,en"))
+                        if (r.code in 200..299) RecipeImport.fromHtml(r.body, known) else null
+                    }.getOrNull()
+                }
+                busy = false
+                if (result != null && result.ingredients.isNotEmpty()) onParsed(result)
+                else error = "Z tejto stránky sa recept nepodarilo načítať (alebo je bez internetu). Skopíruj text receptu a vlož ho sem."
+            }
+        } else {
+            val r = RecipeImport.parse(text, known)
+            if (r.ingredients.isEmpty()) error = "Nenašli sa žiadne suroviny. Každá surovina nech je na vlastnom riadku, napr. „500 g múky“ alebo „2 vajcia“."
+            else onParsed(r)
+        }
+    }
+    DomovAlert(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Recept z textu alebo odkazu") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Vlož zoznam surovín (jedna na riadok, voliteľne s názvom a počtom porcií), alebo odkaz na stránku s receptom.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                DomovTextField(
+                    value = text,
+                    onValueChange = { text = it; error = null },
+                    placeholder = { Text("Palacinky\n4 porcie\n250 g múky\n2 vajcia\n500 ml mlieka") },
+                    minLines = 5,
+                    maxLines = 10,
+                    isError = error != null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(onClick = { text = clipboardText(); error = null }, enabled = !busy) { Text("Vložiť zo schránky") }
+                if (error != null) Text(error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                if (busy) Text("Načítavam…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { DialogPrimaryButton(onClick = { go() }, enabled = text.isNotBlank() && !busy) { Text(if (url != null) "Načítať" else "Rozpoznať") } },
+        dismissButton = { DialogTextButton(onClick = onDismiss, enabled = !busy) { Text("Zrušiť") } },
+    )
+}
+
+/** Zaškrtnutie riadku v zoznamoch návrhov: plná fajka, alebo prázdny krúžok. */
+@Composable
+private fun TickMark(on: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    if (on) {
+        Icon(Sym.check, contentDescription = "Vybrané", tint = scheme.primary, modifier = Modifier.size(20.dp))
+    } else {
+        Box(Modifier.size(20.dp).border(1.5.dp, scheme.outline, CircleShape).semantics { contentDescription = "Nevybrané" })
     }
 }
 
@@ -1278,7 +1729,8 @@ internal fun MealsHomeCard(meals: List<Meals.Meal>, recipes: List<Meals.Recipe>,
                             Text(meal.title.ifBlank { recipe?.name ?: "Jedlo" }, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                             val cap = buildString {
                                 if (meal.cooked) append("Uvarené")
-                                if (who.isNotBlank()) { if (isNotEmpty()) append(" · "); append("Varí $who") }
+                                if (meal.skipped) append("Nevarilo sa")
+                                if (who.isNotBlank() && !meal.skipped) { if (isNotEmpty()) append(" · "); append("Varí $who") }
                             }
                             if (cap.isNotBlank()) Text(cap, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                         }

@@ -1121,6 +1121,7 @@ class PresenceReceiver : BroadcastReceiver() {
                 ChatEngine.startListening(context)
                 ChatEngine.request(context)
                 EventReminders.check(context)
+                runCatching { MealPromptAlarm.schedule(context) }
                 // ranný prehľad: nastaviť budík a poslať, ak telefón bol ráno vypnutý (len keď je zapnutý)
                 val pending = goAsync()
                 MorningBriefAlarm.check(context) { pending.finish() }

@@ -82,3 +82,8 @@ java -cp "$OUT/housesync.jar:$JSON" HouseSyncTestKt
 # súkromný chat: AES-GCM, typ správy, video/limit, náhľad, potvrdenia, záloha príloh
 kotlinc -cp "$JSON" $S/HouseSync.kt $S/Chat.kt tools/ChatTest.kt -include-runtime -d "$OUT/chat.jar" 2>/dev/null
 java -cp "$OUT/chat.jar:$JSON" ChatTestKt
+# jedálniček: zhoda surovín, ks/g, plán nákupu, zmeny plánu, Uvarené?, import receptu, návrh týždňa
+kotlinc -cp "$JSON" $S/Events.kt $S/Meniny.kt $S/Shopping.kt $S/HouseSync.kt $S/Meals.kt $S/MealShop.kt $S/RecipeImport.kt $S/MealPlanner.kt tools/MealsTest.kt -include-runtime -d "$OUT/meals.jar" 2>/dev/null
+java -cp "$OUT/meals.jar:$JSON" MealsTestKt
+kotlinc -cp "$JSON" $S/Shopping.kt $S/Meals.kt $S/MealShop.kt $S/RecipeImport.kt $S/MealPlanner.kt tools/MealAutoTest.kt -include-runtime -d "$OUT/mealauto.jar" 2>/dev/null
+java -cp "$OUT/mealauto.jar:$JSON" MealAutoTestKt

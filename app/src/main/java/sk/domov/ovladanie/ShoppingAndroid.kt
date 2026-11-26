@@ -119,13 +119,19 @@ object ShoppingStore {
 
     /** Pridá položku; do histórie sa zapíše, len keď sa zoznam naozaj zmenil (nekúpená duplicita sa nepočíta). */
     @Synchronized
-    fun add(c: Context, text: String, list: ShopListKind = ShopListKind.SHARED): List<ShopItem> {
+    fun add(c: Context, text: String, list: ShopListKind = ShopListKind.SHARED, historyName: String? = null): List<ShopItem> {
         val before = items(c)
         val now = System.currentTimeMillis()
         val me = HouseholdStore.phoneId(c)
         val next = update(c) { ShoppingList.add(it, text, now, addedById = me, addedByName = HouseholdStore.name(c), deviceId = me, list = list) }
-        if (next != before) updateHistory(c) { ShoppingHistory.record(it, text, now) }
+        if (next != before) updateHistory(c) { ShoppingHistory.record(it, historyName?.takeIf { n -> n.isNotBlank() } ?: text, now) }
         return next
+    }
+
+    /** Názov do histórie návrhov: pri položke z jedálnička bez množstva („Cibuľa“ a nie „Cibuľa 450 g“). */
+    private fun historyNameOf(c: Context, item: ShopItem): String {
+        val fromPlan = runCatching { MealsStore.isPlanItem(c, item.id) }.getOrDefault(false)
+        return if (fromPlan) Meals.parseAmount(item.name).name.ifBlank { item.name } else item.name
     }
 
     /**
@@ -140,10 +146,10 @@ object ShoppingStore {
         val next = update(c) { ShoppingList.toggle(it, id, now).map { if (it.id == id) it.copy(deviceId = me) else it } }
         if (before != null) {
             if (!before.done) {
-                updateHistory(c) { ShoppingHistory.bought(it, before.name, now) }
+                updateHistory(c) { ShoppingHistory.bought(it, historyNameOf(c, before), now) }
                 // od 1.60: odškrtnutá položka ide do zásob (množstvo z názvu, bez pýtania)
                 runCatching { MealsStore.addPurchased(c, before.name) }
-            } else if (before.doneAt > 0) updateHistory(c) { ShoppingHistory.unbought(it, before.name, before.doneAt) }
+            } else if (before.doneAt > 0) updateHistory(c) { ShoppingHistory.unbought(it, historyNameOf(c, before), before.doneAt) }
         }
         return next
     }
@@ -183,7 +189,7 @@ object ShoppingStore {
     @Synchronized
     fun remove(c: Context, item: ShopItem): List<ShopItem> {
         val next = update(c) { ShoppingList.tombstone(it, item.id, System.currentTimeMillis(), HouseholdStore.phoneId(c)) }
-        if (!item.done) updateHistory(c) { ShoppingHistory.forget(it, item.name) }
+        if (!item.done) updateHistory(c) { ShoppingHistory.forget(it, historyNameOf(c, item)) }
         return next
     }
 

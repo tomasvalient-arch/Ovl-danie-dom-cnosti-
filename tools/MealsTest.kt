@@ -205,12 +205,15 @@ fun main() {
     check("už v zozname je prázdne, keď surovina nie je v pláne", already.isEmpty())
 
     // Mlieko ako surovina + už v zozname
-    val withMilk = allRecipes + recipe("r-kasa", "Kaša", 2, Meals.Ingredient("Mlieko", 500.0, "ml"))
+    val withMilk = allRecipes + recipe("r-kasa", "Kaša", 2, Meals.Ingredient("Mlieko", 1500.0, "ml"))
     val milkMeal = meal("2026-11-25", Meals.Slot.DINNER, "r-kasa", "Kaša")
     val planMilk = Meals.planShopping(wed, wed, listOf(milkMeal), withMilk, stock, list, ShopListKind.SHARED)
     check("mlieko už v spoločnom zozname ide do Už v zozname", planMilk.single { Meals.fold(it.name) == Meals.fold("Mlieko") }.kind == Meals.NeedKind.ALREADY)
     val planMine = Meals.planShopping(wed, wed, listOf(milkMeal), withMilk, stock, list, ShopListKind.MINE)
-    check("v mojom zozname mlieko nie je, takže sa pridá (máme 1 l, treba 0,5 l — dosť, teda sa nepridá)", planMine.none { Meals.fold(it.name) == Meals.fold("Mlieko") })
+    val mineMilk = planMine.single { Meals.fold(it.name) == Meals.fold("Mlieko") }
+    check("v mojom zozname mlieko nie je, takže sa pridá (máme 1 l, treba 1,5 l → chýba 0,5 l)", mineMilk.kind == Meals.NeedKind.MISSING && qtyEq(mineMilk.amount, 500.0) && mineMilk.unit == "ml")
+    val enoughStock = Meals.planShopping(wed, wed, listOf(milkMeal.copy(portions = 1)), withMilk.map { if (it.id == "r-kasa") it.copy(ingredients = listOf(Meals.Ingredient("Mlieko", 500.0, "ml"))) else it }, stock, list, ShopListKind.SHARED)
+    check("zásoba stačí → nič sa neponúka, ani Už v zozname", enoughStock.none { Meals.fold(it.name) == Meals.fold("Mlieko") })
 
     val cookedWed = wedLunch.copy(cooked = true)
     val afterCookPlan = Meals.planShopping(wed, Meals.fillUntil(wed), listOf(cookedWed, satLunch), allRecipes, stock, emptyList())

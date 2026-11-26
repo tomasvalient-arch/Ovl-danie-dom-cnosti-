@@ -4,6 +4,10 @@ import android.content.Context
 
 /** Úložisko jedálnička (recepty, týždenný plán, zásoby) v súbore [Meals.PREFS]. */
 object MealsStore {
+    private const val KEY_SHOP_DAY = "shop_day"
+    private const val KEY_PROMPT = "prompt_cooked"
+    private const val KEY_LINKS = "links"
+
     private fun prefs(c: Context) = c.getSharedPreferences(Meals.PREFS, Context.MODE_PRIVATE)
 
     fun listen(c: Context, l: android.content.SharedPreferences.OnSharedPreferenceChangeListener) =
@@ -91,19 +95,122 @@ object MealsStore {
         return next
     }
 
-    /** Označí jedlo ako uvarené a odráta suroviny zo zásob (okrem „vždy doma“). */
+    /**
+     * Označí jedlo ako uvarené a odráta suroviny zo zásob (okrem „vždy doma“). Druhýkrát to nič neodráta: ak je
+     * jedlo v úložisku už uvarené (napr. potvrdil to druhý telefón), vráti false.
+     */
     @Synchronized
     fun markCooked(c: Context, meal: Meals.Meal): Boolean {
         val recipe = liveRecipes(c).firstOrNull { it.id == meal.recipeId } ?: return false
         val now = System.currentTimeMillis()
         val me = HouseholdStore.phoneId(c)
         val beforeMeals = meals(c)
-        val cooked = meal.copy(cooked = true, updatedAt = now, deviceId = me, deleted = false)
-        val nextMeals = if (beforeMeals.any { it.id == cooked.id }) beforeMeals.map { if (it.id == cooked.id) cooked else it } else beforeMeals + cooked
+        val stored = beforeMeals.firstOrNull { it.id == meal.id }
+        if (stored != null && (stored.cooked || stored.deleted)) return false
+        val base = stored ?: meal
+        val cooked = base.copy(cooked = true, skipped = false, updatedAt = now, deviceId = me, deleted = false)
+        val nextMeals = if (stored != null) beforeMeals.map { if (it.id == cooked.id) cooked else it } else beforeMeals + cooked
         writeMeals(c, nextMeals, beforeMeals)
         val beforePantry = pantry(c)
-        writePantry(c, Meals.deduct(beforePantry, recipe, Meals.portionsOf(meal, recipe), now, me), beforePantry)
+        writePantry(c, Meals.deduct(beforePantry, recipe, Meals.portionsOf(base, recipe), now, me), beforePantry)
         return true
+    }
+
+    /** „Nevarilo sa“: jedlo ostane v pláne, ale nejde do nákupu a nepýta sa „Uvarené?“. Zásoby sa nemenia. */
+    @Synchronized
+    fun skipMeal(c: Context, meal: Meals.Meal): Boolean {
+        val before = meals(c)
+        val stored = before.firstOrNull { it.id == meal.id } ?: return false
+        if (stored.cooked || stored.deleted || stored.skipped) return false
+        val now = System.currentTimeMillis()
+        val me = HouseholdStore.phoneId(c)
+        val next = before.map { if (it.id == stored.id) it.copy(skipped = true, updatedAt = now, deviceId = me) else it }
+        writeMeals(c, next, before)
+        return true
+    }
+
+    /** Jedlá, o ktorých sa pýtame „Uvarené?“ (včera a skôr, dnes po čase chodu). */
+    fun pendingCooked(c: Context, today: java.time.LocalDate = java.time.LocalDate.now(), now: java.time.LocalTime = java.time.LocalTime.now()): List<Meals.Meal> =
+        Meals.pendingCooked(liveMeals(c), liveRecipes(c), today, now)
+
+    /** Uloží viac jedál naraz (návrh týždňa, kopírovanie týždňa). */
+    fun saveMeals(c: Context, list: List<Meals.Meal>) {
+        for (m in list) saveMeal(c, m)
+    }
+
+    // ── nastavenia a väzby nákupu na plán (len tento telefón) ─────────────────
+
+    /** Deň nákupu 1 = pondelok … 7 = nedeľa; 0 = nenastavené (doplní sa do nedele). */
+    fun shopDay(c: Context): Int = prefs(c).getInt(KEY_SHOP_DAY, 0).coerceIn(0, 7)
+
+    fun setShopDay(c: Context, day: Int) {
+        prefs(c).edit().putInt(KEY_SHOP_DAY, day.coerceIn(0, 7)).apply()
+    }
+
+    /** Večerné oznámenie „Uvarené?“ (predvolene zapnuté). */
+    fun promptEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_PROMPT, true)
+
+    fun setPromptEnabled(c: Context, on: Boolean) {
+        prefs(c).edit().putBoolean(KEY_PROMPT, on).apply()
+        runCatching { MealPromptAlarm.schedule(c) }
+    }
+
+    fun links(c: Context): List<MealShop.Link> = MealShop.fromJson(prefs(c).getString(KEY_LINKS, null))
+
+    /** Je položka v zozname z plánu (vznikla alebo sa zvýšila cez Doplniť nákup)? */
+    fun isPlanItem(c: Context, itemId: String): Boolean = links(c).any { it.itemId == itemId }
+
+    @Synchronized
+    private fun saveLinks(c: Context, list: List<MealShop.Link>) {
+        prefs(c).edit().putString(KEY_LINKS, MealShop.toJson(list)).apply()
+    }
+
+    /**
+     * Uplatní vybrané riadky z „Doplniť nákup“: pridá chýbajúce (MISSING / ASK), zvýši množstvo (TOPUP), zníži alebo
+     * odstráni to, čo plán už nepotrebuje (STALE). Pri každom si zapamätá, z ktorých jedál to je, aby sa dalo neskôr
+     * upraviť po zmene plánu. Vráti počet zmenených položiek v zozname.
+     */
+    fun applyShopping(c: Context, picks: List<Meals.ShopNeed>, target: ShopListKind): Int {
+        var changed = 0
+        var links = links(c)
+        val meals = liveMeals(c)
+        val recipes = liveRecipes(c)
+        for (n in picks) {
+            when (n.kind) {
+                Meals.NeedKind.MISSING, Meals.NeedKind.ASK -> {
+                    val before = ShoppingStore.items(c)
+                    val text = n.shopText()
+                    // do histórie návrhov ide len názov bez množstva (množstvá z plánu sa každý týždeň menia)
+                    val after = ShoppingStore.add(c, text, target, historyName = n.name)
+                    val clean = ShoppingList.clean(text)
+                    val item = after.firstOrNull { it.list == target && !it.done && it.name.equals(clean, ignoreCase = true) } ?: continue
+                    if (before.none { it.id == item.id }) changed++
+                    if (Meals.isKnownUnit(n.unit)) {
+                        links = MealShop.record(links, item.id, Meals.key(n.name), Meals.family(n.unit), Meals.toBase(n.amount, n.unit), n.parts)
+                    }
+                }
+                Meals.NeedKind.TOPUP -> {
+                    val item = ShoppingStore.items(c).firstOrNull { it.id == n.itemId } ?: continue
+                    val old = Meals.parseAmount(item.name)
+                    val delta = Meals.toBase(n.amount, n.unit) - Meals.toBase(old.amount, old.unit)
+                    ShoppingStore.rename(c, item, n.newText)
+                    changed++
+                    if (Meals.isKnownUnit(n.unit)) {
+                        links = MealShop.record(links, item.id, Meals.key(n.name), Meals.family(n.unit), delta.coerceAtLeast(0.0), n.parts)
+                    }
+                }
+                Meals.NeedKind.STALE -> {
+                    val item = ShoppingStore.items(c).firstOrNull { it.id == n.itemId } ?: continue
+                    val red = MealShop.reductions(links, listOf(item), meals, recipes).firstOrNull() ?: continue
+                    if (n.newText.isEmpty()) ShoppingStore.remove(c, item) else ShoppingStore.rename(c, item, n.newText)
+                    links = links.filter { it.itemId != item.id } + listOfNotNull(MealShop.afterReduction(red, meals, recipes))
+                    changed++
+                }
+                Meals.NeedKind.ALREADY -> {}
+            }
+        }
+        saveLinks(c, MealShop.prune(links, ShoppingStore.items(c)))
+        return changed
     }
 
     @Synchronized

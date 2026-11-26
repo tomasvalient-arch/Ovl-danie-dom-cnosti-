@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
     /** Povolené sú len známe obrazovky (appku môže spustiť aj iná appka cez spúšťač). */
     private fun pageFrom(intent: Intent?): String? {
         val page = intent?.getStringExtra(EXTRA_PAGE) ?: return null
-        if (page in setOf("shopping", "shopping-mine", "shopping-shared", "events", "events-add", "chat")) {
+        if (page in setOf("shopping", "shopping-mine", "shopping-shared", "events", "events-add", "chat", "meals")) {
             val thread = intent.getStringExtra(ChatEngine.EXTRA_THREAD)?.takeIf { it.isNotBlank() }
             return if (page == "chat" && thread != null) "chat:$thread" else page
         }
@@ -67,6 +67,8 @@ class MainActivity : ComponentActivity() {
         EventReminders.check(this)
         // ranný prehľad: obnoví budík (napr. po vynútenom zastavení appky) a dobehne zmeškaný
         MorningBriefAlarm.check(this)
+        // „Varili ste?“: obnoví večerný budík
+        runCatching { MealPromptAlarm.schedule(this) }
         runCatching { HouseSyncEngine.schedule(this) }
         runCatching { HouseSyncEngine.request(this) }
         runCatching { ChatEngine.schedule(this) }
