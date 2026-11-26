@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
@@ -119,7 +120,7 @@ internal fun TechInfoDialog(device: Device, values: Map<String, Any>?, onDismiss
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (tech != null) {
-                    OutlinedButton(
+                    FilledTonalButton(
                         onClick = {
                             if (monitoring) {
                                 monitorJob?.cancel()

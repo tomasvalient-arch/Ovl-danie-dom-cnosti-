@@ -49,7 +49,42 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private fun saveDevices(list: List<Device>) {
         if (_demo.value) return
-        if (!saver.save(list)) _notice.value = "Zariadenia sa nepodarilo uložiť."
+        if (!saver.save(list)) {
+            _notice.value = if (store.isBroken) "Zoznam zariadení je poškodený a zmeny sa neukladajú – vyrieš to v Nastaveniach › Pozor – zoznam zariadení."
+            else "Zariadenia sa nepodarilo uložiť."
+        }
+    }
+
+    /** true = uložený zoznam zariadení sa nedal prečítať; ukladanie je zablokované, kým sa používateľ nerozhodne. */
+    private val _devicesBroken = MutableStateFlow(store.isBroken)
+    val devicesBroken: StateFlow<Boolean> = _devicesBroken
+
+    /** Pôvodné dáta poškodeného zoznamu (na poslanie / skopírovanie). */
+    fun brokenDevicesRaw(): String? = store.brokenRaw()
+
+    /** Skúsi obnoviť zoznam z odloženej kópie. Zariadenia pridané medzitým (len v pamäti) sa doplnia. Vráti text výsledku. */
+    fun rescueDevices(): String {
+        val rescued = try {
+            store.rescue()
+        } catch (e: Exception) {
+            return "Obnovenie sa nepodarilo: " + (e.message ?: e.javaClass.simpleName)
+        } ?: return "Uložené dáta sa nedajú prečítať ani teraz. Môžeš ich poslať na kontrolu, alebo začať s prázdnym zoznamom."
+        _devicesBroken.value = false
+        val list = if (_devices.value.isEmpty()) rescued else mergeImported(rescued, _devices.value)
+        _devices.value = list
+        saver.markSaved(rescued)
+        saveDevices(list)
+        refreshAll()
+        DomovWidgetProvider.redrawAll(app)
+        return "Obnovené: ${list.size} ${BackupSummary.plural(list.size, "zariadenie", "zariadenia", "zariadení")}."
+    }
+
+    /** Začať odznova: zruší blokovanie (pôvodné dáta ostanú odložené) a uloží aktuálny zoznam v pamäti. */
+    fun discardBrokenDevices() {
+        store.discardBroken()
+        _devicesBroken.value = false
+        saver.markSaved(emptyList())
+        saveDevices(_devices.value)
     }
 
     /** Chyba v pozadí (sieť, cloud, nečakané dáta) nesmie zhodiť appku – zobrazí sa ako upozornenie. */
@@ -61,6 +96,10 @@ class HomeViewModel(private val app: Application) : AndroidViewModel(app) {
     /** Krátka správa o neúspešnom príkaze, ktorú UI ukáže ako upozornenie (null = žiadna). */
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice
+
+    init {
+        if (store.isBroken) _notice.value = "Zoznam zariadení sa nepodarilo načítať – pozri Nastavenia › Pozor – zoznam zariadení."
+    }
 
     fun dismissNotice() {
         _notice.value = null

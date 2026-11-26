@@ -110,6 +110,14 @@ class DomovWidgetProvider : AppWidgetProvider() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
             views.setOnClickPendingIntent(R.id.widget_root, pending)
+            // TalkBack: celý widget je jedno tlačidlo – prečíta názov, stav a čo urobí ťuknutie
+            val action = when {
+                device == null || sensor != null -> null
+                values == null || power == null -> "ťukni na prepnutie"
+                on -> "ťukni na vypnutie"
+                else -> "ťukni na zapnutie"
+            }
+            views.setContentDescription(R.id.widget_root, listOfNotNull(device?.name ?: "Domov", text, action).joinToString(", "))
             manager.updateAppWidget(widgetId, views)
         }
 

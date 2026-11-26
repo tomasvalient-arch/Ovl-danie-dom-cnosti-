@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -51,11 +52,7 @@ import java.io.File
 
 @Composable
 private fun Hint(text: String, warning: Boolean = false) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodySmall,
-        color = if (warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    if (warning) NoticeCard(text, NoticeKind.Warning) else InfoHint(text)
 }
 
 /** Pošle nainštalovanú appku ako súbor cez systémové Zdieľať (Quick Share / Nearby Share, Bluetooth, e-mail…). */
@@ -145,7 +142,7 @@ internal fun ShareAppScreen(vm: HomeViewModel, onBack: () -> Unit) {
             onClick = { showQr = true },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Zobraziť QR kód") }
-        OutlinedButton(
+        FilledTonalButton(
             onClick = { scope.launch { runCatching { shareApkFile(context) }.onFailure { Toast.makeText(context, "Súbor sa nepodarilo pripraviť", Toast.LENGTH_SHORT).show() } } },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Poslať len inštalačný súbor (Quick Share, Bluetooth…)") }
@@ -342,17 +339,17 @@ internal fun JoinHouseholdScreen(vm: HomeViewModel, onBack: () -> Unit) {
             DomovCard {
                 Text("Hotovo", style = MaterialTheme.typography.titleMedium, color = Domov.colors.good)
                 done.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                Hint("Zariadenia ovládaš na domácej WiFi. Automatiku príchod/odchod zapneš na karte Automatika.")
+                Hint("Zariadenia ovládaš na domácej WiFi. Automatiku príchod/odchod zapneš v Nastavenia › Automatika.")
                 Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Pokračovať") }
             }
             return@PageScaffold
         }
         Text(
-            "Na telefóne, ktorý už appku Domov má, otvor Nastavenia → Zdieľať appku a vyber, čo môžeš ovládať. Potom tu naskenuj " +
+            "Na telefóne, ktorý už appku Domov má, otvor Nastavenia → Domácnosť → Zdieľať appku a vyber, čo môžeš ovládať. Potom tu naskenuj " +
                 "QR kód, ktorý sa ti tam ukáže. Oba telefóny musia byť na rovnakej WiFi.",
             style = MaterialTheme.typography.bodyMedium,
         )
-        OutlinedTextField(
+        DomovTextField(
             value = name, onValueChange = { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             label = { Text("Meno tohto telefónu") }, placeholder = { Text("napr. Jana") },
         )
@@ -374,10 +371,10 @@ internal fun JoinHouseholdScreen(vm: HomeViewModel, onBack: () -> Unit) {
         Spacer(Modifier.width(1.dp))
         Text("Kamera nefunguje?", style = MaterialTheme.typography.titleSmall)
         Hint("Vlož odkaz z QR kódu (začína http:// a obsahuje #k=).")
-        OutlinedTextField(
+        DomovTextField(
             value = linkText, onValueChange = { linkText = it; error = null }, modifier = Modifier.fillMaxWidth(),
             label = { Text("Odkaz") },
         )
-        OutlinedButton(enabled = !busy && linkText.isNotBlank(), onClick = { connect(linkText) }, modifier = Modifier.fillMaxWidth()) { Text("Pripojiť") }
+        FilledTonalButton(enabled = !busy && linkText.isNotBlank(), onClick = { connect(linkText) }, modifier = Modifier.fillMaxWidth()) { Text("Pripojiť") }
     }
 }

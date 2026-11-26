@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -135,7 +136,7 @@ internal fun HeatScreen(vm: HomeViewModel, zoneId: String?, onBack: (() -> Unit)
             if (sys == null) {
                 DomovCard {
                     Text(if (heat.loading) "Načítavam stav z Honeywell cloudu…" else "Stav kúrenia sa zatiaľ nepodarilo načítať.")
-                    OutlinedButton(onClick = { vm.heat.poll(force = true) }, enabled = !heat.loading) { Text("Skúsiť znova") }
+                    FilledTonalButton(onClick = { vm.heat.poll(force = true) }, enabled = !heat.loading) { Text("Skúsiť znova") }
                 }
                 return@Column
             }
@@ -264,7 +265,7 @@ private fun ZoneControl(zone: EvoZone, busy: Boolean, onSet: (Double, HeatDurati
         Button(onClick = { onSet(target, duration) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
             Text(if (busy) "Nastavuje sa…" else "Nastaviť ${evoTemp(target)}" + if (duration == HeatDuration.PERMANENT) " natrvalo" else if (duration == HeatDuration.NEXT_CHANGE) " do zmeny" else " na ${duration.label}")
         }
-        OutlinedButton(onClick = onFollow, enabled = !busy && zone.mode != EvoZoneMode.FOLLOW, modifier = Modifier.fillMaxWidth()) {
+        FilledTonalButton(onClick = onFollow, enabled = !busy && zone.mode != EvoZoneMode.FOLLOW, modifier = Modifier.fillMaxWidth()) {
             Icon(Sym.schedule, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Podľa programu")
         }
     }
@@ -285,26 +286,16 @@ internal fun HeatLoginScreen(vm: HomeViewModel, onBack: () -> Unit, onDone: () -
         wasLoggingIn = heat.loggingIn
     }
 
-    PageScaffold("Kúrenie Honeywell", onBack) {
-        DomovCard {
-            Text("Honeywell evohome (nepovinné)", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Domov ukáže teplotu v každej zóne a nastaví kúrenie cez ten istý cloud ako appka Honeywell Home (brána RFG100).\n\n" +
-                    "1. Zadaj e-mail a heslo, ktorými sa prihlasuješ do appky Honeywell Home.\n" +
-                    "2. Údaje sa uložia zašifrované len v tomto telefóne a nikdy nie sú v exporte.\n" +
-                    "3. Kúrenie ide cez internet (funguje aj mimo domu). Stav sa obnovuje najviac raz za 3 minúty – Honeywell pri častých dotazoch dočasne blokuje.\n\n" +
-                    "Kúrenie sa nikdy nemení automaticky – príchod a odchod, Všetko vypnúť ani Noc naň nesiahajú.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
+    PageScaffold("Kúrenie Honeywell", onBack, subtitle = "Nepovinné · cez internet, aj mimo domu") {
+        InfoHint("Domov ukáže teplotu v zónach a nastaví kúrenie cez ten istý cloud ako appka Honeywell Home (brána RFG100). Údaje sú zašifrované len v tomto telefóne a nikdy nie sú v exporte. Stav sa obnovuje najviac raz za 3 minúty. Kúrenie sa nikdy nemení automaticky (príchod, odchod, Všetko vypnúť ani Noc naň nesiahajú).")
         if (heat.configured) {
             DomovCard {
                 Text("Prihlásený ako ${heat.email}", style = MaterialTheme.typography.titleSmall)
-                OutlinedButton(onClick = { confirmLogout = true }, modifier = Modifier.fillMaxWidth()) { Text("Odhlásiť a zabudnúť heslo") }
+                FilledTonalButton(onClick = { confirmLogout = true }, modifier = Modifier.fillMaxWidth()) { Text("Odhlásiť a zabudnúť heslo") }
             }
             Text("Prihlásiť iný účet:", style = MaterialTheme.typography.titleSmall)
         }
-        OutlinedTextField(
+        DomovTextField(
             value = email,
             onValueChange = { email = it; vm.heat.clearLoginError() },
             label = { Text("E-mail (Honeywell Home)") },
@@ -312,7 +303,7 @@ internal fun HeatLoginScreen(vm: HomeViewModel, onBack: () -> Unit, onDone: () -
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
+        DomovTextField(
             value = password,
             onValueChange = { password = it; vm.heat.clearLoginError() },
             label = { Text("Heslo") },
@@ -329,11 +320,7 @@ internal fun HeatLoginScreen(vm: HomeViewModel, onBack: () -> Unit, onDone: () -
             enabled = !heat.loggingIn && email.isNotBlank() && password.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (heat.loggingIn) "Prihlasujem…" else "Prihlásiť") }
-        Text(
-            "Ak si zabudol heslo, obnov ho v appke Honeywell Home. Po viacerých neúspešných pokusoch Honeywell prihlásenie na chvíľu zablokuje.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        InfoHint("Ak si zabudol heslo, obnov ho v appke Honeywell Home. Po viacerých neúspešných pokusoch Honeywell prihlásenie na chvíľu zablokuje.")
     }
     if (confirmLogout) {
         DomovAlert(

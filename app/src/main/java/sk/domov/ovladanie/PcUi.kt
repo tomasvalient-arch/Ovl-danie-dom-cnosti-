@@ -1,12 +1,23 @@
 package sk.domov.ovladanie
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -52,10 +63,10 @@ fun PcScreen(onBack: () -> Unit, onAdd: () -> Unit) {
     var forget by remember { mutableStateOf<PcEntry?>(null) }
     val wifiOk = wifiNetwork(context) != null
 
-    PageScaffold("Ovládanie PC", onBack) {
+    // Nastavenia › Počítač (od 1.40.0): len správa – spárované PC, pridanie, návod. Ovládanie je na karte Počítač v lište.
+    PageScaffold("Počítač – spárované PC", onBack) {
         Text(
-            "Z telefónu uvidíš obraz PC s Windowsom a budeš ho ovládať: myš, klávesnica, schránka a vypnutie alebo zapnutie PC. " +
-                "Všetko beží len doma, na rovnakej WiFi ako PC, a je šifrované.",
+            "Spárované PC a párovanie nového. Samotné ovládanie (obraz, myš, klávesnica, zapnutie PC) je na karte Počítač v spodnej lište.",
             style = MaterialTheme.typography.bodyMedium,
         )
         if (!wifiOk) PcHint(PcNet.NO_WIFI, warning = true)
@@ -66,6 +77,7 @@ fun PcScreen(onBack: () -> Unit, onAdd: () -> Unit) {
                     androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
                         Text(pc.name, style = MaterialTheme.typography.titleMedium)
                         PcHint(pc.hosts.firstOrNull()?.let { "Naposledy na adrese $it" } ?: "Adresa sa zistí pri pripojení")
+                        PcHint(if (pc.macs.isNotEmpty()) "Zapnutie cez Wake-on-LAN: áno" else "Zapnutie cez Wake-on-LAN: PC neposlal MAC adresu")
                     }
                     var menu by remember { mutableStateOf(false) }
                     androidx.compose.foundation.layout.Box {
@@ -74,18 +86,6 @@ fun PcScreen(onBack: () -> Unit, onAdd: () -> Unit) {
                             DropdownMenuItem(text = { Text("Zabudnúť tento PC") }, onClick = { menu = false; forget = pc })
                         }
                     }
-                }
-                Button(
-                    onClick = { PcRemoteActivity.open(context, pc.serverId) },
-                    enabled = wifiOk,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Ovládať") }
-                if (pc.macs.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = { PcRemoteActivity.open(context, pc.serverId, wake = true) },
-                        enabled = wifiOk,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Zapnúť PC (Wake-on-LAN)") }
                 }
             }
         }
@@ -120,7 +120,7 @@ fun PcScreen(onBack: () -> Unit, onAdd: () -> Unit) {
             danger = true,
             confirmButton = {
                 DialogPrimaryButton(onClick = {
-                    PcStore.remove(context, f.serverId)
+                    runCatching { PcStore.remove(context, f.serverId) } // dočasná chyba Keystore: nič sa nezmaže
                     pcs = PcStore.list(context)
                     forget = null
                 }) { Text("Zabudnúť") }
@@ -133,7 +133,7 @@ fun PcScreen(onBack: () -> Unit, onAdd: () -> Unit) {
 // ------------------------------------------------------------------ párovanie
 
 @Composable
-fun PcAddScreen(onBack: () -> Unit) {
+fun PcAddScreen(onBack: () -> Unit, autoScan: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var hostText by remember { mutableStateOf("") }
@@ -183,6 +183,21 @@ fun PcAddScreen(onBack: () -> Unit) {
         }
     }
 
+    // z karty Počítač („Naskenovať QR kód“) sa skener otvorí hneď, raz
+    var scanStarted by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(autoScan) {
+        if (autoScan && !scanStarted) {
+            scanStarted = true
+            scanner.launch(
+                ScanOptions()
+                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                    .setPrompt("Naskenuj QR kód z programu Domov PC")
+                    .setBeepEnabled(false)
+                    .setOrientationLocked(false),
+            )
+        }
+    }
+
     PageScaffold("Pridať PC", onBack) {
         val ok = done
         if (ok != null) {
@@ -196,7 +211,7 @@ fun PcAddScreen(onBack: () -> Unit) {
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Ovládať PC") }
-                OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Hotovo") }
+                FilledTonalButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Hotovo") }
             }
             return@PageScaffold
         }
@@ -232,7 +247,7 @@ fun PcAddScreen(onBack: () -> Unit) {
         if (!searching && found.isNotEmpty()) {
             PcHint("Nájdené v sieti (ťukni, čím vyplníš adresu):")
             found.forEach { f ->
-                OutlinedButton(
+                FilledTonalButton(
                     onClick = { hostText = if (f.port == PcProto.DEFAULT_PORT) f.host else "${f.host}:${f.port}" },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("${f.name.ifBlank { "PC" }}  (${f.host})") }
@@ -240,7 +255,7 @@ fun PcAddScreen(onBack: () -> Unit) {
         }
         if (!searching && found.isEmpty()) {
             PcHint("V sieti sa nenašiel žiadny PC s Domov PC. Je program spustený a Windows firewall ho nechal? Adresu PC môžeš zadať aj ručne.")
-            OutlinedButton(onClick = { search() }, modifier = Modifier.fillMaxWidth()) { Text("Hľadať znova") }
+            FilledTonalButton(onClick = { search() }, modifier = Modifier.fillMaxWidth()) { Text("Hľadať znova") }
         }
         DomovTextField(
             value = hostText,
@@ -259,7 +274,7 @@ fun PcAddScreen(onBack: () -> Unit) {
             placeholder = { Text("ABCDE-FGHJK") },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
         )
-        OutlinedButton(
+        FilledTonalButton(
             enabled = !busy && hostText.isNotBlank() && code.isNotBlank(),
             onClick = {
                 val hp = PcNet.parseHostPort(hostText)
@@ -272,5 +287,180 @@ fun PcAddScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Spárovať") }
         PcHint("Kód platí len pár minút po kliknutí na „Spárovať nový telefón“ a po úspešnom spárovaní prestane platiť.")
+    }
+}
+
+// ------------------------------------------------------------------ karta Počítač v lište (od 1.40.0)
+
+/**
+ * Karta Počítač: spárovaný PC = jedno ťuknutie na Ovládať, voľba režimu (touchpad / priamy dotyk), písanie a Wake-on-LAN.
+ * Bez spárovaného PC rovno párovanie. Samotné ovládanie je naďalej PcRemoteActivity na celú obrazovku (lišta sa skryje,
+ * Späť sa vráti sem). Stav „zapnutý“ sa zámerne nezisťuje – ukazuje sa posledná známa adresa.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+internal fun PcTab(wifiOn: Boolean, pagesOpen: Int, onPage: (String) -> Unit) {
+    val context = LocalContext.current
+    // znova po návrate z párovania / správy PC
+    val pcs = remember(pagesOpen) { runCatching { PcStore.list(context) }.getOrDefault(emptyList()) }
+    var modeTick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+
+    TabPage("Počítač") {
+        if (pcs.isEmpty()) {
+            PcPairCard(onScan = { onPage("pc-add-qr") }, onManual = { onPage("pc-add") })
+            Text(
+                "Čo sa nedá: zamknutá obrazovka Windowsu, Ctrl+Alt+Del a okná spustené ako správca. Podrobný návod: Nastavenia › Počítač.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+            return@TabPage
+        }
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            InfoChip(if (wifiOn) Sym.wifi else Sym.wifiOff, if (wifiOn) "Na WiFi" else "Bez WiFi", error = !wifiOn)
+            InfoChip(Sym.check, if (pcs.size == 1) "1 spárovaný PC" else "Spárované PC: ${pcs.size}", good = true)
+        }
+        if (!wifiOn) PcHint(PcNet.NO_WIFI, warning = true)
+
+        pcs.forEach { pc0 ->
+            // režim (touchpad / priamy dotyk) sa číta z uloženého PC – po zmene sa karta prekreslí
+            val pc = remember(pc0.serverId, modeTick) { runCatching { PcStore.get(context, pc0.serverId) }.getOrNull() ?: pc0 }
+            fun open(direct: Boolean? = null, keyboard: Boolean = false, wake: Boolean = false) {
+                if (direct != null && direct != pc.direct) {
+                    runCatching { PcStore.update(context, pc.serverId) { it.copy(direct = direct) } }
+                    modeTick++
+                }
+                PcRemoteActivity.open(context, pc.serverId, wake = wake, keyboard = keyboard)
+            }
+            PcCard(
+                pc = pc,
+                wifiOn = wifiOn,
+                onOpen = { open() },
+                onMode = { open(direct = it) },
+                onManage = { onPage("pc") },
+            )
+            SectionLabel(if (pcs.size == 1) "Rýchle akcie" else "Rýchle akcie · ${pc.name}")
+            DomovCard(padding = 10.dp, spacing = 0.dp) {
+                SettingRow(Sym.keyboard, "Písať na PC", caption = "Otvorí ovládanie rovno s klávesnicou", enabled = wifiOn, onClick = { open(keyboard = true) })
+                SettingRow(
+                    Sym.power, "Zapnúť PC (Wake-on-LAN)",
+                    caption = if (pc.macs.isNotEmpty()) "Keď je PC vypnutý alebo uspatý" else "PC neposlal MAC adresu – zapnutie nejde",
+                    enabled = wifiOn && pc.macs.isNotEmpty(),
+                    onClick = { open(wake = true) },
+                )
+            }
+        }
+        Text(
+            "Ovládanie sa otvorí na celú obrazovku – spodná lišta sa skryje, Späť ťa vráti sem. Párovanie a správa PC: Nastavenia › Počítač.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun PcCard(pc: PcEntry, wifiOn: Boolean, onOpen: () -> Unit, onMode: (Boolean) -> Unit, onManage: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    DomovCard(padding = 16.dp, spacing = 14.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Box(
+                Modifier.size(56.dp).background(scheme.onPrimaryContainer.copy(alpha = 0.9f), RoundedCornerShape(18.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Sym.desktopWindows, contentDescription = null, tint = scheme.primaryContainer, modifier = Modifier.size(30.dp)) }
+            Spacer(Modifier.width(14.dp))
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                Text(pc.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                PcHint(pc.hosts.firstOrNull()?.let { "Naposledy na adrese $it" } ?: "Adresa sa zistí pri pripojení")
+            }
+            var menu by remember { mutableStateOf(false) }
+            androidx.compose.foundation.layout.Box {
+                IconButton(onClick = { menu = true }) { Icon(Sym.moreVert, contentDescription = "Viac") }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("Spárované PC a párovanie") }, onClick = { menu = false; onManage() })
+                }
+            }
+        }
+        Button(
+            onClick = onOpen,
+            enabled = wifiOn,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = RoundedCornerShape(28.dp),
+        ) {
+            Icon(Sym.playArrow, contentDescription = null, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("Ovládať", style = MaterialTheme.typography.titleMedium)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ModeTile(Sym.mouse, "Touchpad", "Prst hýbe kurzorom ako na notebooku", selected = !pc.direct, enabled = wifiOn, modifier = Modifier.weight(1f)) { onMode(false) }
+            ModeTile(Sym.touchApp, "Priamy dotyk", "Ťukneš priamo tam, kam chceš kliknúť", selected = pc.direct, enabled = wifiOn, modifier = Modifier.weight(1f)) { onMode(true) }
+        }
+    }
+}
+
+/** Režim ovládania: ťuknutie ho uloží a otvorí ovládanie. Naposledy použitý režim je zvýraznený. */
+@Composable
+private fun ModeTile(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, caption: String, selected: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.alpha(if (enabled) 1f else 0.5f),
+        shape = RoundedCornerShape(20.dp),
+        color = scheme.surfaceContainer,
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) scheme.primary else scheme.surfaceVariant),
+    ) {
+        androidx.compose.foundation.layout.Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(icon, contentDescription = null, tint = scheme.primaryContainer, modifier = Modifier.size(24.dp))
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(caption, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, minLines = 2)
+            if (selected) Text("Naposledy použitý", style = MaterialTheme.typography.labelSmall, color = scheme.primary)
+        }
+    }
+}
+
+/** Karta Počítač bez spárovaného PC: tri kroky a rovno párovanie. */
+@Composable
+private fun PcPairCard(onScan: () -> Unit, onManual: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    DomovCard(padding = 16.dp, spacing = 14.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Box(
+                Modifier.size(56.dp).background(scheme.onPrimaryContainer.copy(alpha = 0.9f), RoundedCornerShape(18.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Sym.desktopWindows, contentDescription = null, tint = scheme.primaryContainer, modifier = Modifier.size(30.dp)) }
+            Spacer(Modifier.width(14.dp))
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                Text("Ovládaj PC z telefónu", style = MaterialTheme.typography.titleMedium)
+                PcHint("Obraz, myš, klávesnica a zapnutie PC – len doma na WiFi, šifrované")
+            }
+        }
+        listOf(
+            "Na PC s Windowsom spusti domov-pc.exe (GitHub › Releases) a povoľ ho vo firewalle.",
+            "Na stránke správy klikni „Spárovať nový telefón“.",
+            "Naskenuj QR kód tu.",
+        ).forEachIndexed { i, t ->
+            Row {
+                androidx.compose.foundation.layout.Box(
+                    Modifier.size(22.dp).background(scheme.onPrimaryContainer.copy(alpha = 0.9f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { Text("${i + 1}", style = MaterialTheme.typography.labelMedium, color = scheme.primaryContainer) }
+                Spacer(Modifier.width(10.dp))
+                Text(t, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            }
+        }
+        Button(onClick = onScan, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(28.dp)) {
+            Icon(Sym.qrCodeScanner, contentDescription = null, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("Naskenovať QR kód", style = MaterialTheme.typography.titleMedium)
+        }
+        FilledTonalButton(onClick = onManual, modifier = Modifier.fillMaxWidth()) {
+            Icon(Sym.search, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Hľadať PC v sieti alebo zadať ručne")
+        }
     }
 }

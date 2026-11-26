@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+: čo sa smie preniesť pri zálohe do cloudu a pri prenose na nový telefón (device-to-device).
+  allowBackup="false" vypína len zálohu do cloudu; prenos z telefónu na telefón by bez týchto pravidiel prebehol.
+
+  Údaje zašifrované kľúčom z Android Keystore sa NEPRENÁŠAJÚ – kľúč z Keystore sa nepresúva, takže na novom
+  telefóne by boli nečitateľné (Tuya cloud, Honeywell, spárované PC, heslo automatickej zálohy).
+  Na presun všetkého slúži šifrovaná záloha appky (.domov) v Nastaveniach › Záloha a obnovenie.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- záloha do Google účtu: nič (appka má vlastnú šifrovanú zálohu) -->
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="domov_cloud.xml" />
+        <exclude domain="sharedpref" path="domov_evohome.xml" />
+        <exclude domain="sharedpref" path="domov_pc.xml" />
+        <exclude domain="sharedpref" path="domov_backup_auto.xml" />
+        <!-- dočasné údaje (stav zariadení, cache) netreba prenášať -->
+        <exclude domain="sharedpref" path="domov_cache.xml" />
+    </device-transfer>
+</data-extraction-rules>

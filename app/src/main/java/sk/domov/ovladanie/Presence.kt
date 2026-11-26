@@ -23,9 +23,15 @@ data class HomeNetwork(
     val ssid: String = "",
     val dhcpServer: String = "",
 ) {
+    /**
+     * Je [current] tá istá sieť? Musí sedieť router a rozsah. SSID a DHCP server sa porovnajú, len ak sú známe na oboch
+     * stranách (SSID Android bez povolenia presnej polohy neprezradí; DHCP server až od Androidu 11 a staršie uložené
+     * odtlačky ho nemusia mať). Konečné potvrdenie, že je telefón doma, robí HomeNet.verify (odpoveď vlastného zariadenia).
+     */
     fun matches(current: HomeNetwork): Boolean {
         if (gateway.isBlank() || gateway != current.gateway || subnet != current.subnet) return false
         if (ssid.isNotBlank() && current.ssid.isNotBlank() && ssid != current.ssid) return false
+        if (dhcpServer.isNotBlank() && current.dhcpServer.isNotBlank() && dhcpServer != current.dhcpServer) return false
         return true
     }
 

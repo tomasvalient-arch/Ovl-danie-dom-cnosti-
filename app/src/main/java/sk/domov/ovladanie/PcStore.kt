@@ -2,17 +2,9 @@ package sk.domov.ovladanie
 
 import android.content.Context
 import android.os.Build
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import sk.domov.ovladanie.pc.PcCrypto
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 /**
  * Spárovaný PC. [key] je trvalý kľúč tohto telefónu pre tento PC (ten, čo PC dal pri párovaní) – kto ho má,
@@ -35,11 +27,12 @@ data class PcEntry(
     val keepAwake: Boolean = true,
     /** Posledný zvolený monitor (255 = hlavný). */
     val monitor: Int = 255,
-)
+) {
+    override fun toString(): String = "PcEntry(serverId=$serverId, name=$name, key=${masked(key)}, hosts=$hosts, port=$port, macs=$macs)"
+}
 
 object PcStore {
     private const val FILE = "domov_pc"
-    private const val ALIAS = "domov_pc_keys"
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -69,17 +62,31 @@ object PcStore {
     }
 
     @Synchronized
-    fun list(context: Context): List<PcEntry> {
+    fun list(context: Context): List<PcEntry> = read(context) ?: emptyList()
+
+    /**
+     * Načíta spárované PC. null = údaje sa práve nedajú prečítať (dočasná chyba Keystore) – vtedy sa nič nemaže
+     * a zmeny ([save], [update], [remove]) sa nezapíšu, aby neprepísali existujúce párovania prázdnym zoznamom.
+     */
+    private fun read(context: Context): List<PcEntry>? {
         val enc = prefs(context).getString("pcs", null) ?: return emptyList()
         return try {
             val arr = JSONArray(decrypt(enc))
             (0 until arr.length()).map { fromJson(arr.getJSONObject(it)) }
         } catch (e: Exception) {
-            // kľúč v Keystore sa stratil (napr. po obnove telefónu): spárovať treba znova
-            prefs(context).edit().remove("pcs").commit()
-            emptyList()
+            if (SecretBox.isPermanent(e)) {
+                // kľúč v Keystore sa stratil (napr. po obnove telefónu) alebo sú údaje poškodené: spárovať treba znova
+                prefs(context).edit().remove("pcs").commit()
+                emptyList()
+            } else {
+                android.util.Log.w("Domov", "PC: spárované PC sa teraz nedajú načítať", e)
+                null
+            }
         }
     }
+
+    private fun readForWrite(context: Context): MutableList<PcEntry> =
+        read(context)?.toMutableList() ?: throw PcStoreUnavailableException()
 
     @Synchronized
     fun get(context: Context, serverId: String): PcEntry? = list(context).firstOrNull { it.serverId == serverId }
@@ -87,7 +94,7 @@ object PcStore {
     /** Pridá PC, alebo nahradí spárovaný PC s rovnakým ID (nové párovanie). */
     @Synchronized
     fun save(context: Context, entry: PcEntry) {
-        val all = list(context).toMutableList()
+        val all = readForWrite(context)
         val i = all.indexOfFirst { it.serverId == entry.serverId }
         if (i >= 0) all[i] = entry else all.add(entry)
         write(context, all)
@@ -95,7 +102,7 @@ object PcStore {
 
     @Synchronized
     fun update(context: Context, serverId: String, change: (PcEntry) -> PcEntry): PcEntry? {
-        val all = list(context).toMutableList()
+        val all = read(context)?.toMutableList() ?: return null
         val i = all.indexOfFirst { it.serverId == serverId }
         if (i < 0) return null
         val next = change(all[i])
@@ -106,7 +113,7 @@ object PcStore {
 
     @Synchronized
     fun remove(context: Context, serverId: String) {
-        write(context, list(context).filter { it.serverId != serverId })
+        write(context, readForWrite(context).filter { it.serverId != serverId })
     }
 
     private fun write(context: Context, all: List<PcEntry>) {
@@ -147,33 +154,12 @@ object PcStore {
         monitor = o.optInt("monitor", 255).coerceIn(0, 255),
     )
 
-    // --- šifrovanie kľúčom z Android Keystore (rovnako ako CloudStore) ---
+    // --- šifrovanie kľúčom z Android Keystore (spoločné so CloudStore, pozri SecretBox) ---
 
-    private fun key(): SecretKey {
-        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
-        val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        gen.init(
-            KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build()
-        )
-        return gen.generateKey()
-    }
+    private fun encrypt(text: String): String = SecretBox.encrypt(SecretBox.PC, text)
 
-    private fun encrypt(text: String): String {
-        val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.ENCRYPT_MODE, key())
-        val ct = c.doFinal(text.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(c.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(ct, Base64.NO_WRAP)
-    }
-
-    private fun decrypt(stored: String): String {
-        val (iv, ct) = stored.split(":", limit = 2).map { Base64.decode(it, Base64.NO_WRAP) }
-        val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
-        return c.doFinal(ct).toString(Charsets.UTF_8)
-    }
+    private fun decrypt(stored: String): String = SecretBox.decrypt(SecretBox.PC, stored)
 }
+
+/** Spárované PC sa práve nedajú načítať (dočasná chyba Keystore) – zmena sa nezapísala, nič sa nezmazalo. */
+class PcStoreUnavailableException : IllegalStateException("Spárované PC sa teraz nedajú načítať. Skús to znova o chvíľu.")

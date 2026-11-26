@@ -25,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
@@ -250,7 +251,8 @@ internal fun DomovTextField(
     minLines: Int = 1,
 ) {
     val scheme = MaterialTheme.colorScheme
-    OutlinedTextField(
+    val fill = scheme.surfaceContainerHighest
+    TextField(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier,
@@ -267,14 +269,16 @@ internal fun DomovTextField(
         singleLine = singleLine,
         maxLines = maxLines,
         minLines = minLines,
-        shape = RoundedCornerShape(16.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = scheme.surfaceContainerLow,
-            unfocusedContainerColor = scheme.surfaceContainerLow,
-            disabledContainerColor = scheme.surfaceContainerLow,
-            errorContainerColor = scheme.surfaceContainerLow,
-            focusedBorderColor = scheme.primary,
-            unfocusedBorderColor = scheme.outlineVariant,
+        shape = RoundedCornerShape(18.dp),
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = fill,
+            unfocusedContainerColor = fill,
+            disabledContainerColor = fill,
+            errorContainerColor = fill,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            disabledIndicatorColor = Color.Transparent,
+            errorIndicatorColor = Color.Transparent,
         ),
     )
 }

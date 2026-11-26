@@ -24,12 +24,16 @@
 
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="Domov"
         android:supportsRtl="true"
         android:theme="@style/Theme.Domov">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -63,6 +67,63 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/domov_widget_info" />
         </receiver>
+
+        <!-- widget Nákup (od 1.44): malý 2×2 a zoznam 4×3 -->
+        <receiver
+            android:name=".ShoppingWidgetSmall"
+            android:exported="false"
+            android:label="@string/shop_widget_small_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/shop_widget_small_info" />
+        </receiver>
+
+        <receiver
+            android:name=".ShoppingWidgetLarge"
+            android:exported="false"
+            android:label="@string/shop_widget_large_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/shop_widget_large_info" />
+        </receiver>
+
+        <receiver
+            android:name=".DnesWidgetProvider"
+            android:exported="false"
+            android:label="@string/dnes_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/dnes_widget_info" />
+        </receiver>
+
+        <service
+            android:name=".SyncJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
+            android:name=".ChatJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- rýchle pridanie z widgetu Nákup: malé okno nad plochou, samostatná úloha mimo zoznamu posledných aplikácií -->
+        <activity
+            android:name=".ShoppingQuickAddActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Domov.QuickAdd"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
 
         <service
             android:name=".PresenceService"
@@ -105,6 +166,17 @@
         <receiver
             android:name=".EventsReceiver"
             android:exported="false" />
+
+        <!-- ranný prehľad: vlastný budík a prepočet po zmene času / časového pásma (systémové vysielania) -->
+        <receiver
+            android:name=".MorningBriefReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name=".PresenceReceiver"

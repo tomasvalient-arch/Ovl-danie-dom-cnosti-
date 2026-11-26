@@ -127,40 +127,44 @@ internal fun MoonPhaseIcon(
     }
 }
 
-/** Úzky pás pod počasím: ikona, názov a %, vpravo najbližšia hlavná fáza. */
+/** Riadok fázy mesiaca (ikona, názov a %, vpravo najbližšia hlavná fáza) – do karty počasia alebo samostatne. */
+@Composable
+internal fun MoonLine(info: MoonInfo, modifier: Modifier = Modifier, compact: Boolean = false) {
+    val tz = TimeZone.getDefault()
+    Row(
+        modifier = modifier.heightIn(min = if (compact) 28.dp else 40.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MoonPhaseIcon(info.illumination, info.lightOnRight, Modifier.size(if (compact) 22.dp else 26.dp))
+        Spacer(Modifier.width(if (compact) 8.dp else 10.dp))
+        Text(
+            info.text,
+            style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.titleSmall,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        info.next?.let { next ->
+            Text(
+                next.label(tz),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** Záložný pás, keď karta počasia nie je na Domove. */
 @Composable
 internal fun MoonStrip(info: MoonInfo, modifier: Modifier = Modifier) {
-    val tz = TimeZone.getDefault()
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .heightIn(min = 40.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            MoonPhaseIcon(info.illumination, info.lightOnRight, Modifier.size(26.dp))
-            Spacer(Modifier.width(10.dp))
-            Text(
-                info.text,
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            info.next?.let { next ->
-                Text(
-                    next.label(tz),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-        }
+        MoonLine(info, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
     }
 }
 

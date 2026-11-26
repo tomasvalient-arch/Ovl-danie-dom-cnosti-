@@ -2,4 +2,11 @@
 <resources>
     <string name="widget_label">Domov – zariadenie</string>
     <string name="widget_description">Zapne alebo vypne jedno zariadenie ťuknutím (1×1).</string>
+    <string name="shop_widget_small_label">Domov – Nákup (malý)</string>
+    <string name="shop_widget_small_description">Nákupný zoznam 2×2: koľko zostáva, prvé položky a + na rýchle pridanie.</string>
+    <string name="shop_widget_large_label">Domov – Nákup (zoznam)</string>
+    <string name="shop_widget_large_description">Celý nákupný zoznam 4×3: ťuknutím odškrtneš, + pridá, Vymazať kúpené.</string>
+    <string name="dnes_widget_label">Domov – Dnes</string>
+    <string name="dnes_widget_description">Dnešný program, počet položiek v nákupe a rýchle pridanie udalosti.</string>
 </resources>
+

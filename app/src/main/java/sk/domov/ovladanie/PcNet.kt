@@ -195,7 +195,11 @@ object PcNet {
                 port = usedPort,
                 macs = info.macs.map { PcWol.formatMac(it) },
             )
-            PcStore.save(context, entry)
+            try {
+                PcStore.save(context, entry)
+            } catch (e: PcStoreUnavailableException) {
+                return@withContext PairResult.Fail(e.message ?: "Spárovanie sa nepodarilo uložiť.")
+            }
             PairResult.Ok(entry)
         }
 }

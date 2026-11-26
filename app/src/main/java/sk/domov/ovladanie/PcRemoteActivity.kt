@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -34,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +67,8 @@ class PcRemoteActivity : ComponentActivity() {
     private var session: PcSession? = null
     internal var remoteView: RemoteScreenView? = null
     private var firstWake = false
+    /** „Písať na PC“ z karty Počítač: klávesnica sa otvorí raz, keď je PC pripojený. */
+    internal var keyboardOnConnect = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,6 +81,7 @@ class PcRemoteActivity : ComponentActivity() {
             return
         }
         firstWake = intent?.getBooleanExtra(EXTRA_WAKE, false) == true
+        keyboardOnConnect = savedInstanceState == null && intent?.getBooleanExtra(EXTRA_KEYBOARD, false) == true
         val s = PcSession(applicationContext, entry)
         s.toaster = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
         session = s
@@ -131,13 +136,15 @@ class PcRemoteActivity : ComponentActivity() {
     companion object {
         const val EXTRA_PC = "pc"
         const val EXTRA_WAKE = "wake"
+        const val EXTRA_KEYBOARD = "keyboard"
 
-        /** Otvorí ovládanie PC; [wake] = najprv ho zapnúť cez Wake-on-LAN. */
-        fun open(context: Context, serverId: String, wake: Boolean = false) {
+        /** Otvorí ovládanie PC; [wake] = najprv ho zapnúť cez Wake-on-LAN, [keyboard] = po pripojení otvoriť klávesnicu. */
+        fun open(context: Context, serverId: String, wake: Boolean = false, keyboard: Boolean = false) {
             context.startActivity(
                 Intent(context, PcRemoteActivity::class.java)
                     .putExtra(EXTRA_PC, serverId)
-                    .putExtra(EXTRA_WAKE, wake),
+                    .putExtra(EXTRA_WAKE, wake)
+                    .putExtra(EXTRA_KEYBOARD, keyboard),
             )
         }
     }
@@ -153,6 +160,12 @@ private fun PcRemoteScreen(session: PcSession, activity: PcRemoteActivity) {
     var keysBar by remember { mutableStateOf(false) }
     var powerAsk by remember { mutableIntStateOf(0) }
     BackHandler { activity.finish() }
+    LaunchedEffect(session.phase) {
+        if (session.phase == PcSession.Phase.ONLINE && activity.keyboardOnConnect) {
+            activity.keyboardOnConnect = false
+            activity.remoteView?.showKeyboard()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black).imePadding()) {
         AndroidView(
@@ -445,7 +458,7 @@ private fun StatusOverlay(session: PcSession, onClose: () -> Unit) {
                 )
                 Button(onClick = { session.retry() }) { Text("Pripojiť znova") }
                 if (session.entry.macs.isNotEmpty()) {
-                    OutlinedButton(onClick = { session.wake() }) { Text("Zapnúť PC (Wake-on-LAN)") }
+                    FilledTonalButton(onClick = { session.wake() }) { Text("Zapnúť PC (Wake-on-LAN)") }
                 }
                 TextButton(onClick = onClose) { Text("Zavrieť") }
             } else {

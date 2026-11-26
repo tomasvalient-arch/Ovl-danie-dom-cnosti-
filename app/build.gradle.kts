@@ -12,8 +12,8 @@ android {
         applicationId = "sk.domov.ovladanie"
         minSdk = 26
         targetSdk = 35
-        versionCode = 53
-        versionName = "1.36.0"
+        versionCode = 84
+        versionName = "1.65.1"
     }
 
     // Pevný ladiaci kľúč: každý build má rovnaký podpis, takže sa nová verzia dá nainštalovať
@@ -48,6 +48,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // BuildConfig.DEBUG: ukážkový režim (extra "demo") len v ladiacom builde
+        buildConfig = true
     }
 }
 
@@ -57,6 +59,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
 
     implementation("androidx.core:core-ktx:1.15.0")
+    // widget Nákup: zoznam položiek vo widgete (RemoteCollectionItems, aj na Androide < 12)
+    implementation("androidx.core:core-remoteviews:1.1.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

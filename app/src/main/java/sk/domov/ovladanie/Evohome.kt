@@ -39,7 +39,9 @@ fun evoErrorText(e: Throwable): String = when ((e as? EvoException)?.kind) {
     null -> "Kúrenie: " + (e.message ?: e.javaClass.simpleName)
 }
 
-data class EvoTokens(val access: String, val expiresAt: Long, val refresh: String)
+data class EvoTokens(val access: String, val expiresAt: Long, val refresh: String) {
+    override fun toString(): String = "EvoTokens(access=${masked(access)}, expiresAt=$expiresAt, refresh=${masked(refresh)})"
+}
 
 /** Režimy celého systému (systemMode). */
 object EvoMode {

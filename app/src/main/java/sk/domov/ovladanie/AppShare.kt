@@ -18,6 +18,8 @@ import javax.crypto.spec.SecretKeySpec
  * Token je jednorazový (zariadenia sa vydajú len raz) a platí [ShareOffer.VALID_MS].
  */
 data class ShareLink(val host: String, val port: Int, val token: String, val key: String) {
+    override fun toString(): String = "ShareLink(host=$host, port=$port, token=${masked(token)}, key=${masked(key)})"
+
     fun url(): String = "http://${hostPart(host)}:$port/d?t=$token#k=$key"
 
     companion object {
@@ -42,6 +44,8 @@ data class ShareLink(val host: String, val port: Int, val token: String, val key
 
 /** Jedna ponuka zdieľania: token, kľúč a čas vypršania. */
 data class ShareOffer(val token: String, val key: String, val createdAt: Long) {
+    override fun toString(): String = "ShareOffer(token=${masked(token)}, key=${masked(key)}, createdAt=$createdAt)"
+
     val expiresAt: Long get() = createdAt + VALID_MS
     fun valid(now: Long): Boolean = now in createdAt until expiresAt
     fun tokenMatches(candidate: String?): Boolean =
@@ -61,6 +65,10 @@ data class SharePayload(
     val heatEmail: String? = null,
     val heatPassword: String? = null,
 ) {
+    /** devicesJson obsahuje local keys – do toString ide len dĺžka. */
+    override fun toString(): String =
+        "SharePayload(from=$from, devicesJson=${masked(devicesJson)}, cloud=$cloud, heatEmail=$heatEmail, heatPassword=${masked(heatPassword)})"
+
     fun toJson(): String = JSONObject().apply {
         put("v", 1)
         put("from", from)

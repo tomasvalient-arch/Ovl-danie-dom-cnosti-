@@ -57,16 +57,17 @@ import kotlinx.coroutines.launch
 /** Karty dolnej lišty. Poradie = poradie v lište. */
 enum class HomeTab(val label: String, val icon: ImageVector, val selectedIcon: ImageVector) {
     HOME("Domov", Sym.home, Sym.homeFill),
-    AUTOMATION("Automatika", Sym.locationHome, Sym.locationHome),
+    CHAT("Chat", Sym.chat, Sym.chat),
     HEAT("Kúrenie", Sym.thermostat, Sym.thermostat),
+    PC("Počítač", Sym.desktopWindows, Sym.desktopWindows),
     SETTINGS("Nastavenia", Sym.settings, Sym.settings),
 }
 
 /** Plávajúca dolná lišta: zaoblená pilulka, vybraná karta je jantárová. */
 @Composable
-internal fun HomeBottomBar(selected: HomeTab, onSelect: (HomeTab) -> Unit, automationAlert: Boolean = false) {
+internal fun HomeBottomBar(selected: HomeTab, onSelect: (HomeTab) -> Unit, automationAlert: Boolean = false, chatUnread: Int = 0) {
     val scheme = MaterialTheme.colorScheme
-    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp)) {
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 12.dp)) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(34.dp),
@@ -74,7 +75,7 @@ internal fun HomeBottomBar(selected: HomeTab, onSelect: (HomeTab) -> Unit, autom
             border = BorderStroke(1.dp, scheme.surfaceVariant),
             shadowElevation = 6.dp,
         ) {
-            Row(modifier = Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(modifier = Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
                 HomeTab.entries.forEach { t ->
                     val sel = t == selected
                     val tint = if (sel) scheme.onPrimaryContainer else scheme.onSurfaceVariant
@@ -88,15 +89,25 @@ internal fun HomeBottomBar(selected: HomeTab, onSelect: (HomeTab) -> Unit, autom
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
-                        // červená bodka na karte Automatika, keď je zapnutá, ale služba nebeží
-                        if (t == HomeTab.AUTOMATION && automationAlert) {
+                        // červená bodka na Nastaveniach (› Automatika), keď je automatika zapnutá, ale služba nebeží
+                        if (t == HomeTab.SETTINGS && automationAlert) {
                             androidx.compose.material3.BadgedBox(badge = { androidx.compose.material3.Badge() }) {
                                 Icon(if (sel) t.selectedIcon else t.icon, contentDescription = "Automatika nebeží", tint = tint, modifier = Modifier.size(22.dp))
+                            }
+                        } else if (t == HomeTab.CHAT && chatUnread > 0) {
+                            androidx.compose.material3.BadgedBox(
+                                badge = {
+                                    androidx.compose.material3.Badge(containerColor = scheme.primary, contentColor = scheme.onPrimary) {
+                                        Text(if (chatUnread > 99) "99+" else chatUnread.toString(), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                },
+                            ) {
+                                Icon(if (sel) t.selectedIcon else t.icon, contentDescription = "Chat", tint = tint, modifier = Modifier.size(22.dp))
                             }
                         } else {
                             Icon(if (sel) t.selectedIcon else t.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
                         }
-                        Text(t.label, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = tint, maxLines = 1)
+                        Text(t.label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = tint, maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -106,7 +117,7 @@ internal fun HomeBottomBar(selected: HomeTab, onSelect: (HomeTab) -> Unit, autom
 
 /** Spoločné rozloženie kariet: veľký nadpis ako na Domove a posúvateľný obsah. */
 @Composable
-private fun TabPage(title: String, content: @Composable () -> Unit) {
+internal fun TabPage(title: String, content: @Composable () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -158,117 +169,13 @@ internal fun rememberNow(periodMs: Long): Long {
     return now
 }
 
-private fun namesText(names: List<String>): String = when {
+internal fun namesText(names: List<String>): String = when {
     names.isEmpty() -> "Nič"
     names.size <= 2 -> names.joinToString(", ")
     else -> names.take(2).joinToString(", ") + " a ďalšie ${names.size - 2}"
 }
 
-// ------------------------------------------------------------------ Automatika
-
-@Composable
-internal fun AutomationTab(vm: HomeViewModel, devices: List<Device>, pagesOpen: Int, onPage: (String) -> Unit) {
-    val context = LocalContext.current
-    val demo by vm.demo.collectAsState()
-    val known by vm.known.collectAsState()
-    val states by vm.states.collectAsState()
-    val scope = rememberCoroutineScope()
-    var extra by remember { mutableIntStateOf(0) }
-    val tick = rememberPresenceTick() + extra
-    val cfg = remember(pagesOpen, tick) { PresenceStore.config(context) }
-    val status = remember(pagesOpen, tick) { PresenceStore.status(context) }
-    val serviceRunning = remember(pagesOpen, tick) { PresenceService.isRunning }
-    val history = remember(pagesOpen, tick) { PresenceStore.history(context) }
-    val members = remember(pagesOpen, tick) { HouseholdStore.members(context) }
-    LaunchedEffect(status.state, status.since) {
-        while (status.state == PresenceState.LEAVING) { delay(20_000); extra++ }
-    }
-    fun values(d: Device): Map<String, Any> = deviceValues(d, states, known)
-    val now = System.currentTimeMillis()
-    val on = cfg.enabled || demo
-    val running = serviceRunning || demo
-    val departIds = AutoDevices.departIds(cfg, devices, ::values)
-    val arriveIds = AutoDevices.arriveIds(cfg, devices, ::values)
-    val departNames = devices.filter { it.id in departIds }.map { it.name }
-    val arriveNames = devices.filter { it.id in arriveIds }.map { it.name }
-    val presence = { onPage("presence") }
-    val sun by rememberSunInfo(tick, cfg)
-
-    TabPage("Automatika") {
-        AutomationCard(
-            on = on,
-            running = running,
-            title = when {
-                !on -> "Príchod a odchod je vypnutý"
-                !running -> "Automatika nebeží"
-                else -> "Automatika beží · " + presenceStateText(status, cfg, now)
-            },
-            text = when {
-                on && !running -> "Je zapnutá, ale služba na pozadí nebeží – príchod ani odchod sa teraz nevyhodnotí."
-                on -> "Odchod sa vyhodnotí ${cfg.departDelayMin} min po odpojení od domácej WiFi" +
-                    if (members.isNotEmpty()) ", ak nikto neostane doma" else ""
-                else -> "Zapni automatické svietenie pri príchode a zhasínanie pri odchode"
-            },
-            onStart = {
-                PresenceService.sync(context)
-                scope.launch { delay(1500); extra++ }
-            },
-            onClick = presence,
-        )
-
-        SectionLabel("Príchod a odchod")
-        DomovCard(padding = 10.dp, spacing = 0.dp) {
-            SettingRow(
-                Sym.locationOn, "Domáca WiFi",
-                caption = cfg.home?.let { h -> (h.ssid.ifBlank { "Uložená" }) + " · odchod po ${cfg.departDelayMin} min" } ?: "Zatiaľ nenastavená",
-                onClick = presence,
-            )
-            SettingRow(Sym.powerSettingsNew, "Pri odchode vypnúť", caption = namesText(departNames), onClick = presence)
-            SettingRow(
-                Sym.doorOpen, "Pri príchode zapnúť",
-                caption = namesText(arriveNames) + if (cfg.onlyWhenDark && arriveNames.isNotEmpty()) " · len keď je tma" else "",
-                onClick = presence,
-            )
-            sun?.let { info ->
-                SettingRow(
-                    Sym.wbTwilight, "Východ ${info.riseText ?: "–"} · Západ ${info.setText ?: "–"}",
-                    caption = info.place.label().replaceFirstChar { it.uppercase() },
-                    onClick = presence,
-                )
-            }
-            SettingRow(
-                Sym.groups, "Domácnosť – viac telefónov",
-                caption = if (members.isEmpty()) "Len tento telefón · pridať člena" else "${members.size + 1} telefóny · vypne sa, keď odídu všetci",
-                onClick = { onPage("household") },
-            )
-            SettingRow(
-                Sym.shieldMoon, "Poistka bez cloudu",
-                caption = if (cfg.guardEnabled) "Zapnutá · ${Scenes.devicesText(cfg.guardIds.size)}" else "Vypnutá · nepovinné",
-                onClick = presence,
-            )
-        }
-
-        SectionLabel("Scény")
-        DomovCard(padding = 10.dp, spacing = 0.dp) {
-            SettingRow(Sym.bedtime, "Scéna Noc", caption = "Čo vypne a čo nechá zapnuté tlačidlo Noc", onClick = { onPage("night") })
-        }
-
-        SectionLabel("Posledné udalosti")
-        DomovCard(padding = 14.dp, spacing = 8.dp) {
-            if (history.isEmpty()) {
-                Text("Zatiaľ nič.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            history.take(3).forEach { e ->
-                Row {
-                    Text(shortTime(e.time, now), style = MaterialTheme.typography.bodySmall, modifier = Modifier.widthIn(min = 78.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(e.text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            TextButton(onClick = presence, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("Celá história a nastavenia") }
-        }
-    }
-}
+// Automatika: od 1.40.0 v Nastavenia › Automatika (SettingsUi.kt), stav pri odchode / zastavenej službe na Domove.
 
 // ------------------------------------------------------------------ Kúrenie
 
@@ -299,70 +206,50 @@ internal fun HeatTab(vm: HomeViewModel, onPage: (String) -> Unit) {
 
 // ------------------------------------------------------------------ Nastavenia
 
+// SettingsTab a podstránky nastavení sú v SettingsUi.kt (od 1.39.0)
+
+/**
+ * Uložený zoznam zariadení sa nedal prečítať: ukladanie je zablokované, kým sa používateľ nerozhodne.
+ * Možnosti: skúsiť obnoviť odloženú kópiu, poslať pôvodné dáta (na kontrolu / ručnú opravu), alebo začať odznova.
+ */
 @Composable
-internal fun SettingsTab(
-    vm: HomeViewModel,
-    devices: List<Device>,
-    wifiOn: Boolean,
-    cloudSet: Boolean,
-    onPage: (String) -> Unit,
-    onSync: () -> Unit,
-    onScan: () -> Unit,
-    onImport: () -> Unit,
-    onExport: () -> Unit,
-    onAddManual: () -> Unit,
-) {
+internal fun BrokenDevicesCard(vm: HomeViewModel) {
     val context = LocalContext.current
-    val heat by vm.heat.ui.collectAsState()
-    val weather by vm.weather.ui.collectAsState()
-    val version = remember { appVersion(context) }
-    var moonVisible by remember { mutableStateOf(MoonStore.visible(context)) }
-
-    TabPage("Nastavenia") {
-        SectionLabel("Zariadenia")
-        DomovCard(padding = 10.dp, spacing = 0.dp) {
-            SettingRow(Sym.sync, "Synchronizovať s Tuya cloudom", caption = if (cloudSet) "Doplní kľúče, názvy a chýbajúce zariadenia" else "Najprv nastav Tuya cloud", onClick = onSync)
-            SettingRow(Sym.search, "Hľadať zariadenia v sieti", caption = if (wifiOn) "Nájde zariadenia na tejto WiFi" else "Len na domácej WiFi", enabled = wifiOn, onClick = onScan)
-            SettingRow(Sym.download, "Import zariadení", caption = "Zo súboru, iného telefónu alebo tinytuya", onClick = onImport)
-            SettingRow(Sym.edit, "Pridať ručne", caption = "Pre pokročilých – IP adresa, Device ID, local key", onClick = onAddManual)
-            SettingRow(Sym.upload, "Export zariadení", caption = "Uložiť alebo poslať zoznam zariadení", enabled = devices.isNotEmpty(), onClick = onExport)
-        }
-
-        SectionLabel("Domácnosť")
-        DomovCard(padding = 10.dp, spacing = 0.dp) {
-            SettingRow(Sym.groups, "Domácnosť a členovia", caption = "Kto je doma, pridať alebo odstrániť člena", onClick = { onPage("household") })
-            SettingRow(Sym.upload, "Zdieľať appku (QR)", caption = "Druhý telefón si stiahne appku a vybrané zariadenia", onClick = { onPage("share") })
-            SettingRow(Sym.download, "Pripojiť sa k domácnosti", caption = "Naskenovať QR kód z iného telefónu", onClick = { onPage("join") })
-        }
-
-        SectionLabel("Pripojené služby")
-        DomovCard(padding = 10.dp, spacing = 0.dp) {
-            SettingRow(Sym.cloud, "Tuya cloud", caption = if (cloudSet) "Pripojené · vypínanie aj mimo domu" else "Nepovinné · vypínanie aj mimo domu", onClick = { onPage("cloud") })
-            SettingRow(Sym.thermostat, "Kúrenie Honeywell", caption = if (heat.configured) "Prihlásený: ${heat.email}" else "Nepovinné · nenastavené", onClick = { onPage("heat-login") })
-            SettingRow(
-                Sym.partlyCloudyDay, "Počasie",
-                caption = weather.location?.name?.ifBlank { null } ?: if (weather.settings.visible) "Miesto nie je nastavené" else "Skryté na Domove",
-                onClick = { onPage("weather") },
-            )
-        }
-
-        SectionLabel("Počítač")
-        DomovCard(padding = 10.dp, spacing = 0.dp) {
-            SettingRow(Sym.devicesOther, "Ovládanie PC", caption = "Obraz, myš a klávesnica PC z telefónu na domácej WiFi", onClick = { onPage("pc") })
-        }
-
-        SectionLabel("Aplikácia")
-        DomovCard(padding = 10.dp, spacing = 0.dp) {
-            SettingRow(
-                Sym.bedtime, "Zobraziť fázu mesiaca",
-                caption = "Úzky pás pod počasím na Domove",
-                onClick = { moonVisible = !moonVisible; MoonStore.setVisible(context, moonVisible) },
-                trailing = { DomovSwitch(checked = moonVisible, onCheckedChange = { moonVisible = it; MoonStore.setVisible(context, it) }) },
-            )
-            SettingRow(Sym.lock, "Záloha a obnovenie", caption = "Nastavenia a zariadenia v zálohe", onClick = { onPage("backup") })
-            SettingRow(Sym.help, "Pomoc", caption = "Ako appka funguje, časté otázky", onClick = { onPage("help") })
-            SettingRow(Sym.info, "O aplikácii", caption = "Domov $version")
-        }
+    var result by remember { mutableStateOf<String?>(null) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    SectionLabel("Pozor – zoznam zariadení")
+    DomovCard(padding = 10.dp, spacing = 0.dp) {
+        SettingRow(
+            Sym.warning, "Zoznam zariadení sa nepodarilo načítať",
+            caption = "Pôvodné dáta sú odložené a zmeny zariadení sa zatiaľ neukladajú, aby sa neprepísali.",
+        )
+        SettingRow(Sym.sync, "Skúsiť obnoviť zoznam", caption = "Z odloženej kópie pôvodných dát", onClick = { result = vm.rescueDevices() })
+        SettingRow(Sym.upload, "Poslať pôvodné dáta", caption = "Na kontrolu alebo ručnú opravu (obsahuje local keys)", onClick = {
+            val raw = vm.brokenDevicesRaw() ?: return@SettingRow
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_SUBJECT, "Domov – poškodený zoznam zariadení")
+                .putExtra(android.content.Intent.EXTRA_TEXT, raw)
+            context.startActivity(android.content.Intent.createChooser(send, "Poslať pôvodné dáta"))
+        })
+        SettingRow(Sym.delete, "Začať s prázdnym zoznamom", caption = "Pôvodné dáta ostanú odložené", onClick = { confirmDiscard = true })
+    }
+    result?.let { msg ->
+        DomovAlert(
+            onDismissRequest = { result = null },
+            title = { Text("Obnovenie zoznamu") },
+            text = { Text(msg) },
+            confirmButton = { DialogPrimaryButton(onClick = { result = null }) { Text("OK") } },
+        )
+    }
+    if (confirmDiscard) {
+        DomovAlert(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("Začať s prázdnym zoznamom?") },
+            text = { Text("Appka začne ukladať nový zoznam zariadení. Pôvodné dáta ostanú odložené a obnoviť ich pôjde, kým sa zoznam znova nepoškodí.") },
+            danger = true,
+            confirmButton = { DialogPrimaryButton(onClick = { vm.discardBrokenDevices(); confirmDiscard = false }) { Text("Začať odznova") } },
+            dismissButton = { DialogTextButton(onClick = { confirmDiscard = false }) { Text("Zrušiť") } },
+        )
     }
 }
-

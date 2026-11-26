@@ -4,4 +4,6 @@
     <cache-path name="zaloha" path="zaloha/" />
     <!-- kópia nainštalovanej appky na poslanie cez Zdieľať (Quick Share, Bluetooth) -->
     <cache-path name="apk" path="apk/" />
+    <cache-path name="chat_capture" path="chat-capture/" />
+    <files-path name="chat" path="chat/" />
 </paths>

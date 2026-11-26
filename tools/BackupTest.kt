@@ -28,6 +28,11 @@ class MemSink : PrefsSink {
         m.keys.filter { BackupSpec.included(file, it) && it !in values }.forEach { m.remove(it) }
         m.putAll(values)
     }
+    override fun discard(file: String) {
+        val m = files[file] ?: return
+        m.keys.filter { BackupSpec.included(file, it) }.forEach { m.remove(it) }
+        if (m.isEmpty()) files.remove(file)
+    }
     override fun readSecrets() = cloud to evo
     override fun writeSecrets(cloud: JSONObject?, evohome: JSONObject?) { this.cloud = cloud; this.evo = evohome }
     fun dump(): String = files.toSortedMap().map { (f, m) -> f + "=" + m.toSortedMap().map { (k, v) -> "$k:${if (v is Set<*>) v.map { it.toString() }.sorted() else v}" } }.joinToString("|") +
@@ -150,6 +155,10 @@ fun main() {
 
     check("počasie (1.12): nastavenie v zálohe, stiahnuté údaje nie", fresh.files["domov_weather"]!!.keys == setOf("settings"))
     check("fáza mesiaca (1.26): zobrazenie v zálohe, ostatné kľúče nie", fresh.files["domov_moon"]!!.keys == setOf("visible") && fresh.files["domov_moon"]!!["visible"] == false)
+    check("jedálniček (1.60): recepty, plán, zásoby a karta Domov v zálohe",
+        BackupSpec.included("domov_meals", "recipes") && BackupSpec.included("domov_meals", "plan") &&
+            BackupSpec.included("domov_meals", "pantry") && BackupSpec.included("domov_meals", "home") &&
+            !BackupSpec.included("domov_meals", "tmp"))
     check("fáza mesiaca (1.26): stará záloha bez kľúča existujúce nastavenie nechá", o1.files["domov_moon"]!!["visible"] == false)
 
     // ---- zlúčenie

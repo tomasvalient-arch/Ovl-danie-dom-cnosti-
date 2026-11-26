@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -72,7 +73,7 @@ fun weatherIcon(i: WeatherIcon): ImageVector = when (i) {
 
 /** Kompaktná karta počasia na hlavnej obrazovke. Ťuknutie = hodiny, podržanie = nastavenie. */
 @Composable
-fun WeatherCard(weather: WeatherController, onSettings: () -> Unit) {
+fun WeatherCard(weather: WeatherController, onSettings: () -> Unit, moon: MoonInfo? = null) {
     val ui by weather.ui.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -113,9 +114,10 @@ fun WeatherCard(weather: WeatherController, onSettings: () -> Unit) {
                         askLocation.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
                     }
                 }, enabled = !locating, modifier = Modifier.weight(1f)) { Text(if (locating) "Zisťujem…" else "Poloha telefónu", maxLines = 1) }
-                OutlinedButton(onClick = onSettings, modifier = Modifier.weight(1f)) { Text("Vybrať mesto", maxLines = 1) }
+                FilledTonalButton(onClick = onSettings, modifier = Modifier.weight(1f)) { Text("Vybrať mesto", maxLines = 1) }
             }
             locError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            moon?.let { MoonLine(it, compact = true) }
             TextButton(onClick = { weather.setVisible(false) }) { Text("Skryť počasie") }
         }
         return
@@ -139,6 +141,7 @@ fun WeatherCard(weather: WeatherController, onSettings: () -> Unit) {
                     }
                     if (!ui.loading) TextButton(onClick = { weather.refresh(force = true) }) { Text("Skúsiť znova") }
                 }
+                moon?.let { MoonLine(it, compact = true) }
                 return@Column
             }
             val kind = Wmo.of(f.now.code, f.now.isDay)
@@ -166,6 +169,7 @@ fun WeatherCard(weather: WeatherController, onSettings: () -> Unit) {
                 today?.precip?.let { "Zrážky $it %" },
             )
             if (extra.isNotEmpty()) Text(extra.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = muted)
+            moon?.let { MoonLine(it, compact = true) }
 
             val days = WeatherPolicy.nextDays(f)
             if (days.isNotEmpty()) {
@@ -241,18 +245,7 @@ fun WeatherSettingsScreen(weather: WeatherController, onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Počasie") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Sym.arrowBack, contentDescription = "Späť") } },
-            )
-        },
-    ) { padding ->
-        Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+    SettingsSubPage("Počasie", onBack, subtitle = "Miesto na karte Domov") {
             DomovCard {
                 SettingRow(
                     icon = Sym.partlyCloudyDay,
@@ -262,7 +255,7 @@ fun WeatherSettingsScreen(weather: WeatherController, onBack: () -> Unit) {
                 Text(
                     "Miesto: " + when {
                         ui.location == null -> "nevybraté"
-                        ui.settings.source == WeatherSource.NONE -> "Domov (poloha zo západu slnka v Príchode a odchode)"
+                        ui.settings.source == WeatherSource.NONE -> "Domov (poloha zo západu slnka v Automatike)"
                         else -> ui.location!!.name
                     },
                     style = MaterialTheme.typography.bodyMedium,
@@ -271,12 +264,8 @@ fun WeatherSettingsScreen(weather: WeatherController, onBack: () -> Unit) {
             }
             SectionLabel("Poloha telefónu")
             DomovCard {
-                Text(
-                    "Appka si raz zistí približnú polohu (na ~1 km) a počasie bude pre toto miesto. Polohu na pozadí nesleduje.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Button(onClick = {
+                InfoHint("Appka si raz zistí približnú polohu (na ~1 km). Polohu na pozadí nesleduje.")
+                FilledTonalButton(onClick = {
                     if (WeatherController.hasLocationPermission(context)) phone() else askLocation.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
                 }, enabled = !locating, modifier = Modifier.fillMaxWidth()) {
                     Icon(Sym.myLocation, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
@@ -285,7 +274,7 @@ fun WeatherSettingsScreen(weather: WeatherController, onBack: () -> Unit) {
             }
             SectionLabel("Mesto")
             DomovCard {
-                OutlinedTextField(
+                DomovTextField(
                     value = query,
                     onValueChange = { query = it },
                     label = { Text("Názov mesta alebo obce") },
@@ -294,7 +283,7 @@ fun WeatherSettingsScreen(weather: WeatherController, onBack: () -> Unit) {
                     keyboardActions = KeyboardActions(onSearch = { search() }),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedButton(onClick = { search() }, enabled = !searching && query.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                FilledTonalButton(onClick = { search() }, enabled = !searching && query.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                     Text(if (searching) "Hľadám…" else "Hľadať")
                 }
                 results?.forEach { p ->
@@ -309,11 +298,6 @@ fun WeatherSettingsScreen(weather: WeatherController, onBack: () -> Unit) {
                 }
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-            Text(
-                "Údaje o počasí: Open-Meteo.com (CC BY 4.0), bez registrácie a bez kľúča. Obnovujú sa najviac raz za 30 minút; bez internetu sa ukáže posledné uložené počasie.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+            InfoHint("Údaje o počasí: Open-Meteo.com (CC BY 4.0), bez registrácie. Obnovujú sa najviac raz za 30 minút; bez internetu sa ukáže posledné uložené počasie.")
     }
 }

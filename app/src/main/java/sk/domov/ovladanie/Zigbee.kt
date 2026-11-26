@@ -10,7 +10,9 @@ import java.util.Locale
  */
 
 /** Kam sa pripojiť: IP, Device ID, local key a verzia zariadenia, ku ktorému sa naozaj pripájame, a cid podzariadenia. */
-data class Route(val ip: String, val devId: String, val localKey: String, val version: String, val cid: String)
+data class Route(val ip: String, val devId: String, val localKey: String, val version: String, val cid: String) {
+    override fun toString(): String = "Route(ip=$ip, devId=$devId, localKey=${masked(localKey)}, version=$version, cid=$cid)"
+}
 
 /**
  * Brány v appke. Podzariadenie si IP a kľúč berie z brány, takže pri zmene IP brány (hľadanie v sieti) alebo kľúča

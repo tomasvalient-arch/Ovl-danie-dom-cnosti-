@@ -45,6 +45,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -67,8 +68,8 @@ fun DeviceScreen(
     notice: String?,
     vm: HomeViewModel,
     onBack: () -> Unit,
+    onSettings: () -> Unit,
 ) {
-    var showEdit by remember { mutableStateOf(false) }
 
     // Kým je detail otvorený a appka na obrazovke, stav sa každých 12 s obnoví (uvidíš zmeny z Tuya appky aj z tlačidla
     // na zariadení). Po návrate do appky sa obnoví hneď; keď je appka na pozadí, nepýta sa vôbec (predtým každé 4 s aj na pozadí).
@@ -79,12 +80,12 @@ fun DeviceScreen(
         var first = true
         lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
             // pri prvom otvorení stav načíta samotná obrazovka; obnoviť hneď len po návrate z pozadia
-            if (!first && !showEdit) vm.refresh(latestDevice, quiet = true)
+            if (!first) vm.refresh(latestDevice, quiet = true)
             first = false
             while (true) {
                 delay(DEVICE_REFRESH_MS)
                 // kým sú otvorené nastavenia (technické info, sledovanie zmien), zariadenie zbytočne nezaťažujeme
-                if (!showEdit) vm.refresh(latestDevice, quiet = true)
+                vm.refresh(latestDevice, quiet = true)
             }
         }
     }
@@ -127,7 +128,7 @@ fun DeviceScreen(
                             Icon(Sym.refresh, contentDescription = "Obnoviť")
                         }
                     }
-                    IconButton(onClick = { showEdit = true }) {
+                    IconButton(onClick = onSettings) {
                         Icon(Sym.tune, contentDescription = "Nastavenia zariadenia")
                     }
                     if (power != null && !isLight && Fryer.detect(values) == null &&
@@ -162,25 +163,11 @@ fun DeviceScreen(
             when (state) {
                 is DeviceState.Loading -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 is DeviceState.Error -> ErrorBox(message = state.message, onRetry = { vm.refresh(device) })
-                is DeviceState.Online -> DeviceContent(device, state.values, wifiOn, vm)
+                is DeviceState.Online -> DeviceContent(device, state.values, wifiOn, vm, onSettings)
             }
         }
     }
 
-    if (showEdit) {
-        DeviceDialog(
-            device = device,
-            onDismiss = { showEdit = false },
-            onSave = { vm.addOrUpdate(it); showEdit = false },
-            onDelete = { vm.remove(device); showEdit = false },
-            values = (state as? DeviceState.Online)?.values,
-            tech = TechActions(
-                probe = { vm.techProbe(device) },
-                cloud = { vm.techCloud(device) },
-                monitor = { sec, onLine -> vm.techMonitor(device, sec, onLine) },
-            ),
-        )
-    }
     pendingTop?.let { (warning, cmd) ->
         DomovAlert(
             onDismissRequest = { pendingTop = null },
@@ -256,19 +243,19 @@ private fun ErrorBox(message: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Boolean, vm: HomeViewModel) {
+private fun DeviceContent(device: Device, values: Map<String, Any>, wifiOn: Boolean, vm: HomeViewModel, onSettings: () -> Unit) {
     // plynulé posuvníky: priebežné príkazy počas ťahania (nebezpečné príkazy s potvrdením len po pustení)
     val live: (Map<String, Any>) -> Unit = { cmd ->
         val template = Templates.detect(values, device.schema, device.category)
         if (wifiOn && Templates.confirmation(template, powerDpOf(device, values), cmd) == null) vm.liveValues(device, cmd)
     }
     CompositionLocalProvider(LocalLiveCommand provides live) {
-        DeviceContentInner(device, values, wifiOn, vm)
+        DeviceContentInner(device, values, wifiOn, vm, onSettings)
     }
 }
 
 @Composable
-private fun DeviceContentInner(device: Device, values: Map<String, Any>, wifiOn: Boolean, vm: HomeViewModel) {
+private fun DeviceContentInner(device: Device, values: Map<String, Any>, wifiOn: Boolean, vm: HomeViewModel, onSettings: () -> Unit) {
     val power = powerDpOf(device, values)
     val on = power != null && values[power] == true
     // svetlo s viacerými zdrojmi (hlavné + podhľad) má prednosť pred obyčajným svetlom
@@ -383,7 +370,13 @@ private fun DeviceContentInner(device: Device, values: Map<String, Any>, wifiOn:
             enabled = wifiOn && (fryer.power == null || on),
             onCommand = { vm.setValues(device, it) },
         )
-        FryerAlertsCard(device)
+        val alerts = FryerStore.settings(LocalContext.current, device.id)
+        SettingRow(
+            Sym.notifications,
+            "Upozornenia",
+            caption = if (alerts.enabled) "Zapnuté · minútu pred koncom, keď dovarí, bezpečnosť" else "Vypnuté · nastavíš v nastaveniach zariadenia",
+            onClick = onSettings,
+        )
     }
 
     // časovač vypnutia pre svetlá a ďalšie zariadenia s odpočtom (zásuvka ho má vo vlastnom ovládaní)

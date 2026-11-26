@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -87,7 +88,7 @@ internal fun openBatterySettings(context: Context) {
 
 /** Posledná známa poloha (len hrubá, na výpočet západu slnka). */
 @SuppressLint("MissingPermission")
-private fun lastLocation(context: Context, onResult: (Location?) -> Unit) {
+internal fun lastLocation(context: Context, onResult: (Location?) -> Unit) {
     val lm = context.getSystemService(LocationManager::class.java)
     if (lm == null) { onResult(null); return }
     val known = lm.getProviders(true).mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }.maxByOrNull { it.time }
@@ -133,7 +134,7 @@ private fun SwitchLine(title: String, checked: Boolean, enabled: Boolean = true,
     }
 }
 
-private fun kindTitle(k: AutoKind): String = when (k) {
+internal fun kindTitle(k: AutoKind): String = when (k) {
     AutoKind.LIGHT -> "svetlo"
     AutoKind.SOCKET -> "zásuvka / vypínač"
     AutoKind.FAN -> "ventilátor / zvlhčovač"
@@ -235,7 +236,7 @@ fun PresenceScreen(vm: HomeViewModel, onBack: () -> Unit, onCloud: () -> Unit, o
                 HorizontalDivider()
                 Note("Optimalizácia batérie je zapnutá – Android môže automatiku na pozadí uspať alebo jej vypnúť internet, " +
                     "potom sa odchod vyhodnotí neskoro alebo vôbec.", warning = true)
-                OutlinedButton(onClick = { openBatterySettings(context) }) { Text("Vypnúť optimalizáciu batérie") }
+                FilledTonalButton(onClick = { openBatterySettings(context) }) { Text("Vypnúť optimalizáciu batérie") }
             }
         }
 
@@ -280,7 +281,7 @@ fun PresenceScreen(vm: HomeViewModel, onBack: () -> Unit, onCloud: () -> Unit, o
                     if (members.isEmpty()) "Zatiaľ len tento telefón. Ďalšieho člena pridáš cez Domácnosť → Pridať člena."
                     else "V domácnosti: ${HouseholdStore.name(context)} a " + members.joinToString(", ") { it.name } + ".",
                 )
-                OutlinedButton(onClick = onHousehold) { Text("Domácnosť a členovia") }
+                FilledTonalButton(onClick = onHousehold) { Text("Domácnosť a členovia") }
             }
         } else {
             HouseholdSection(cfg, status, members, ::update)
@@ -345,7 +346,7 @@ fun PresenceScreen(vm: HomeViewModel, onBack: () -> Unit, onCloud: () -> Unit, o
             if (cloud == null) {
                 Note("Tuya cloud nie je nastavený – mimo domu appka zariadenia nedosiahne, takže ich nevypne a len ťa upozorní " +
                     "„Nepodarilo sa zhasnúť“. Nastav cloud, alebo zapni poistku nižšie.", warning = true)
-                OutlinedButton(onClick = onCloud) { Text("Nastaviť Tuya cloud") }
+                FilledTonalButton(onClick = onCloud) { Text("Nastaviť Tuya cloud") }
             } else {
                 Note("Vypína sa cez Tuya cloud (telefón je už mimo WiFi, ide cez mobilné dáta).")
             }
@@ -411,7 +412,7 @@ fun PresenceScreen(vm: HomeViewModel, onBack: () -> Unit, onCloud: () -> Unit, o
                     busy = "Zapínam…"
                     scope.launch(LogOnError) { result = PresenceActions.arrive(context, null, manual = true); busy = null }
                 }) { Text("Vyskúšať príchod") }
-                OutlinedButton(enabled = busy == null, onClick = {
+                FilledTonalButton(enabled = busy == null, onClick = {
                     busy = "Vypínam cez Tuya cloud…"
                     scope.launch(LogOnError) { result = PresenceActions.depart(context, manual = true); busy = null }
                 }) { Text("Vyskúšať odchod") }
@@ -439,10 +440,10 @@ private fun SunSettings(cfg: PresenceConfig, update: (PresenceConfig) -> Unit, o
     var lon by remember(cfg.lon) { mutableStateOf(cfg.lon?.short() ?: "") }
     Note("Východ a západ slnka sa počítajú priamo v telefóne (NOAA) z najpresnejšej známej polohy: ak má appka povolenie " +
         "na polohu, z poslednej známej polohy telefónu (GPS sa kvôli tomu nezapína), inak zo súradníc domu nižšie, inak z miesta počasia.")
-    OutlinedButton(onClick = onLocate) { Text("Zistiť polohu z telefónu (raz)") }
+    FilledTonalButton(onClick = onLocate) { Text("Zistiť polohu z telefónu (raz)") }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(lat, { lat = it }, label = { Text("Šírka") }, singleLine = true, modifier = Modifier.weight(1f))
-        OutlinedTextField(lon, { lon = it }, label = { Text("Dĺžka") }, singleLine = true, modifier = Modifier.weight(1f))
+        DomovTextField(lat, { lat = it }, label = { Text("Šírka") }, singleLine = true, modifier = Modifier.weight(1f))
+        DomovTextField(lon, { lon = it }, label = { Text("Dĺžka") }, singleLine = true, modifier = Modifier.weight(1f))
     }
     val la = lat.replace(',', '.').toDoubleOrNull()
     val lo = lon.replace(',', '.').toDoubleOrNull()
@@ -462,8 +463,8 @@ private fun ManualDark(cfg: PresenceConfig, update: (PresenceConfig) -> Unit) {
     val f = Darkness.parseHhmm(from)
     val t = Darkness.parseHhmm(to)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        OutlinedTextField(from, { from = it }, label = { Text("Tma od") }, singleLine = true, isError = f == null, modifier = Modifier.weight(1f))
-        OutlinedTextField(to, { to = it }, label = { Text("do") }, singleLine = true, isError = t == null, modifier = Modifier.weight(1f))
+        DomovTextField(from, { from = it }, label = { Text("Tma od") }, singleLine = true, isError = f == null, modifier = Modifier.weight(1f))
+        DomovTextField(to, { to = it }, label = { Text("do") }, singleLine = true, isError = t == null, modifier = Modifier.weight(1f))
     }
     TextButton(enabled = f != null && t != null && (f != cfg.darkFrom || t != cfg.darkTo), onClick = { update(cfg.copy(darkFrom = f!!, darkTo = t!!)) }) {
         Text("Uložiť čas")
@@ -505,7 +506,7 @@ internal fun SunToday(cfg: PresenceConfig) {
     )
 }
 
-private fun agoText(t: Long, now: Long): String {
+internal fun agoText(t: Long, now: Long): String {
     val m = ((now - t) / 60_000).coerceAtLeast(0)
     return when {
         m < 1 -> "práve teraz"
@@ -518,36 +519,7 @@ private fun agoText(t: Long, now: Long): String {
 /** Domácnosť: členovia, pridať člena (zdieľanie appky cez QR), pripojiť sa k domácnosti, pozvánka. */
 @Composable
 internal fun HouseholdScreen(onBack: () -> Unit, onShare: () -> Unit, onJoin: () -> Unit) {
-    val context = LocalContext.current
-    var tick by remember { mutableIntStateOf(0) }
-    var cfg by remember { mutableStateOf(PresenceStore.config(context)) }
-    DisposableEffect(Unit) {
-        val l = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> tick++ }
-        val prefs = PresenceStore.prefs(context)
-        val house = HouseholdStore.listenPrefs(context)
-        prefs.registerOnSharedPreferenceChangeListener(l)
-        house.registerOnSharedPreferenceChangeListener(l)
-        onDispose {
-            prefs.unregisterOnSharedPreferenceChangeListener(l)
-            house.unregisterOnSharedPreferenceChangeListener(l)
-        }
-    }
-    val status = remember(tick) { PresenceStore.status(context) }
-    val members = remember(tick) { HouseholdStore.members(context) }
-    fun update(new: PresenceConfig) {
-        cfg = new
-        PresenceStore.saveConfig(context, new)
-        PresenceService.sync(context)
-    }
-    PageScaffold("Domácnosť", onBack) {
-        Section("Pridať člena") {
-            Note("Druhý telefón naskenuje QR kód, stiahne si appku priamo z tohto telefónu cez WiFi a dostane len zariadenia, ktoré vyberieš.")
-            Button(onClick = onShare, modifier = Modifier.fillMaxWidth()) { Text("Pridať člena – zdieľať appku (QR)") }
-            Note("Tento telefón sa chce pridať k inému?")
-            OutlinedButton(onClick = onJoin, modifier = Modifier.fillMaxWidth()) { Text("Pripojiť sa k domácnosti – naskenovať QR") }
-        }
-        HouseholdSection(cfg, status, members, ::update)
-    }
+    HouseholdSettingsScreen(onBack, onShare, onJoin)
 }
 
 @Composable
@@ -562,7 +534,7 @@ private fun HouseholdSection(cfg: PresenceConfig, status: PresenceStatus, member
         Note("Ak má appku aj ďalší člen domácnosti, telefóny si v domácej WiFi posielajú správu „som doma“ (bez servera a bez " +
             "cloudu, podpísanú kľúčom domácnosti). Keď odíde jeden a druhý je doma, svetlá sa nezhasnú.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(name, { name = it }, label = { Text("Tvoje meno (aj v upozorneniach)") }, singleLine = true, modifier = Modifier.weight(1f))
+            DomovTextField(name, { name = it }, label = { Text("Tvoje meno (aj v upozorneniach)") }, singleLine = true, modifier = Modifier.weight(1f))
             TextButton(enabled = name.isNotBlank() && name.trim() != HouseholdStore.name(context), onClick = {
                 HouseholdStore.setName(context, name)
                 Toast.makeText(context, "Uložené", Toast.LENGTH_SHORT).show()
@@ -591,15 +563,15 @@ private fun HouseholdSection(cfg: PresenceConfig, status: PresenceStatus, member
         }
         Note("Telefón, ktorý leží doma a spí, sa ozýva len približne každých 5–10 minút, preto odporúčam 10 min. Kratší čas = " +
             "rýchlejšie zhasnutie, ale väčšie riziko, že zhasne niekomu, kto je doma.")
-        Note("Keď odídete obaja naraz (do ${cfg.memberWindowMin} min od seba), každý telefón si myslí, že ten druhý je ešte doma, a " +
-            "svetlá ostanú svietiť. Príde notifikácia s tlačidlom Aj tak zhasnúť.", warning = true)
+        Note("Keď odíde naraz viac členov (do ${cfg.memberWindowMin} min od seba), každý telefón si môže myslieť, že niekto ostal " +
+            "doma, a svetlá ostanú svietiť. Príde notifikácia s tlačidlom Aj tak zhasnúť.", warning = true)
         HorizontalDivider()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { showInvite = true }) { Text("Pozvánka textom (len automatika)") }
+            FilledTonalButton(onClick = { showInvite = true }) { Text("Pozvánka textom (len automatika)") }
         }
         Text("Pridať sa do domácnosti", fontWeight = FontWeight.Medium)
-        Note("Ručne bez QR: na druhom telefóne vlož pozvánku (DOMOV-POZVANKA:…) alebo naimportuj export zariadení z prvého telefónu (Nastavenia → Import zariadení).")
-        OutlinedTextField(joinText, { joinText = it; joinInfo = null }, label = { Text("Pozvánka") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Note("Ručne bez QR: na druhom telefóne vlož pozvánku (DOMOV-POZVANKA:…) alebo naimportuj export zariadení z prvého telefónu (Nastavenia → Zariadenia → Import zariadení).")
+        DomovTextField(joinText, { joinText = it; joinInfo = null }, label = { Text("Pozvánka") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = {
                 val clip = context.getSystemService(android.content.ClipboardManager::class.java)?.primaryClip
@@ -629,7 +601,7 @@ internal fun qrBitmap(text: String, size: Int = 640): android.graphics.Bitmap {
 }
 
 @Composable
-private fun InviteDialog(onDismiss: () -> Unit) {
+internal fun InviteDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val invite = remember { HouseholdCrypto.invite(HouseholdStore.shareKey(context)) }
     val qr = remember(invite) { runCatching { qrBitmap(invite) }.getOrNull() }
@@ -649,7 +621,7 @@ private fun InviteDialog(onDismiss: () -> Unit) {
                     )
                 }
                 Text(invite, style = MaterialTheme.typography.bodySmall)
-                Note("Zariadenia (IP, local keys) pozvánka neobsahuje – tie prenesieš cez Nastavenia → Export zariadení. Export obsahuje aj kľúč " +
+                Note("Zariadenia (IP, local keys) pozvánka neobsahuje – tie prenesieš cez Nastavenia → Záloha a prenos → Export zariadení. Export obsahuje aj kľúč " +
                     "domácnosti, takže stačí len on.")
             }
         },

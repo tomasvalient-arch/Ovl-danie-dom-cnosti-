@@ -1,6 +1,5 @@
 package sk.domov.ovladanie
 
-import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -40,6 +39,12 @@ data class Device(
     /** ID podzariadenia za bránou (node_id z Tuya cloudu). Prázdne = samostatné zariadenie. */
     val cid: String = "",
 ) {
+    /** Bez local key v čitateľnej podobe (logy, chybové hlásenia). */
+    override fun toString(): String =
+        "Device(id=$id, name=$name, ip=$ip, devId=$devId, localKey=${masked(localKey)}, version=$version, category=$category, group=$group, " +
+            "gatewayId=$gatewayId, cid=$cid)"
+
+
     /** Podzariadenie za bránou: nemá vlastnú IP ani local key, komunikuje cez bránu (pozri Gateways). */
     val isSub: Boolean get() = gatewayId.isNotBlank() && cid.isNotBlank()
 }
@@ -79,53 +84,6 @@ private fun readSchema(o: JSONObject): Map<String, DpSchema> =
 private fun readHidden(o: JSONObject): Set<String> {
     val hiddenArr = o.optJSONArray("hidden") ?: return emptySet()
     return (0 until hiddenArr.length()).map { hiddenArr.getString(it) }.toSet()
-}
-
-/** Ukladá zariadenia do súkromného úložiska appky (SharedPreferences). */
-class DeviceStore(context: Context) {
-    private val prefs = context.getSharedPreferences("domov", Context.MODE_PRIVATE)
-
-    fun load(): List<Device> {
-        val raw = prefs.getString("devices", null) ?: return emptyList()
-        return try {
-            DeviceList.parseStored(raw).also { Gateways.update(it) }
-        } catch (e: Exception) {
-            // nečitateľné dáta nezahodíme: odložia sa, aby ich ďalšie uloženie neprepísalo bez stopy
-            prefs.edit().putString("devices_backup", raw).apply()
-            emptyList()
-        }
-    }
-
-    fun save(devices: List<Device>) {
-        val arr = JSONArray()
-        devices.forEach { d ->
-            val labels = JSONObject()
-            d.labels.forEach { (k, v) -> labels.put(k, v) }
-            arr.put(
-                JSONObject()
-                    .put("id", d.id)
-                    .put("name", d.name)
-                    .put("ip", d.ip)
-                    .put("devId", d.devId)
-                    .put("localKey", d.localKey)
-                    .put("version", d.version)
-                    .put("labels", labels)
-                    .put("hidden", JSONArray(d.hidden.toList()))
-                    .put("powerDp", d.powerDp)
-                    .put("whiteSwitchDp", d.whiteSwitchDp)
-                    .put("colourSwitchDp", d.colourSwitchDp)
-                    .put("category", d.category)
-                    .put("group", d.group)
-                    .put("productId", d.productId)
-                    .put("model", d.model)
-                    .apply { if (d.isSub) put("gatewayId", d.gatewayId).put("cid", d.cid) }
-                    .apply { if (d.lightRoles.isNotEmpty()) put("lightRoles", rolesToJson(d.lightRoles)) }
-                    .apply { if (d.schema.isNotEmpty()) put("mapping", Schema.toJson(d.schema)) }
-            )
-        }
-        prefs.edit().putString("devices", arr.toString()).apply()
-        Gateways.update(devices)
-    }
 }
 
 /**

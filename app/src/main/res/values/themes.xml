@@ -4,4 +4,12 @@
         <item name="android:windowBackground">@color/domov_bg</item>
         <item name="android:colorAccent">@color/domov_accent</item>
     </style>
+    <!-- rýchle pridanie z widgetu Nákup: priehľadné okno nad plochou (stmavenie kreslí Compose) -->
+    <style name="Theme.Domov.QuickAdd">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
+    </style>
 </resources>

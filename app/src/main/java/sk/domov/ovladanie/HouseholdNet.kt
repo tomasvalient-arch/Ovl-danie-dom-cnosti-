@@ -55,6 +55,10 @@ object HouseholdStore {
         prefs(context).edit().putString("key", k).remove("members").putLong("shared_at", System.currentTimeMillis()).apply()
         PresenceStore.log(context, "Telefón sa pridal do domácnosti (nový kľúč domácnosti).")
         PresenceService.sync(context)
+        HouseSyncEngine.schedule(context)
+        HouseSyncEngine.requestSnapshot(context)
+        // chat: počúvať na novej téme hneď (správy mohli byť poslané ešte pred pripojením), nie až po otvorení záložky Chat
+        runCatching { ChatEngine.restartListening(context); ChatEngine.schedule(context); ChatEngine.request(context) }
         return true
     }
 
@@ -68,10 +72,20 @@ object HouseholdStore {
         prefs(context).edit().putLong("shared_at", System.currentTimeMillis()).apply()
         // služba (ak beží) začne hneď počúvať, či sa nový člen ozve
         if (!wasActive) PresenceService.sync(context)
+        HouseSyncEngine.schedule(context)
         return k
     }
 
     private const val SHARE_WINDOW_MS = 30L * 24 * 60 * 60_000L
+
+    /**
+     * Chat sa používa (poslal som správu, alebo prišla platná od iného člena): predĺži [active] o ďalších
+     * [SHARE_WINDOW_MS]. Zoznam členov sa plní len správami „som doma“ po WiFi; chat aj synchronizácia idú cez
+     * internet, takže domácnosť, ktorej členovia sa po WiFi nestretli, by inak po 30 dňoch bez správ prestala byť aktívna.
+     */
+    fun noteChatActivity(context: Context) {
+        prefs(context).edit().putLong("shared_at", System.currentTimeMillis()).apply()
+    }
 
     /**
      * Má zmysel posielať a počúvať správy „som doma“? Áno, ak sú v domácnosti aj iné telefóny, alebo bol kľúč

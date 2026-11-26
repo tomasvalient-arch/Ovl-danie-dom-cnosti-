@@ -179,7 +179,7 @@ object AppShareClient {
             try {
                 socket.connect(InetSocketAddress(link.host, link.port), 8_000)
             } catch (e: IOException) {
-                throw ShareException("Druhý telefón neodpovedá. Ste obaja na rovnakej WiFi a je na ňom ešte otvorený QR kód?")
+                throw ShareException("Druhý telefón neodpovedá. Sú oba telefóny na rovnakej WiFi a je na ňom ešte otvorený QR kód?")
             }
             val path = "/share?t=${link.token}&name=${URLEncoder.encode(myName, "UTF-8")}"
             socket.getOutputStream().apply {

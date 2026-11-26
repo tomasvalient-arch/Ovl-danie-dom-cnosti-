@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Surface
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -143,8 +144,8 @@ private fun SocketControls(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                OutlinedButton(onClick = { onCommand(t.switches.associateWith { true }) }, enabled = wifiOn) { Text("Zapnúť všetky") }
-                OutlinedButton(onClick = { onCommand(t.switches.associateWith { false }) }, enabled = wifiOn) { Text("Vypnúť všetky") }
+                FilledTonalButton(onClick = { onCommand(t.switches.associateWith { true }) }, enabled = wifiOn) { Text("Zapnúť všetky") }
+                FilledTonalButton(onClick = { onCommand(t.switches.associateWith { false }) }, enabled = wifiOn) { Text("Vypnúť všetky") }
             }
         }
     }

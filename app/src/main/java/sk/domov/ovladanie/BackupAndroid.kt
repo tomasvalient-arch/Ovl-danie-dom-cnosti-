@@ -12,8 +12,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Process
 import android.provider.DocumentsContract
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
@@ -24,23 +22,26 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
-import java.security.KeyStore
 import java.util.Calendar
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 /** SharedPreferences appky: zápis naraz (commit) po súboroch, prihlasovacie údaje cez šifrované úložiská. */
 class AndroidPrefsSink(context: Context) : PrefsSink {
     private val app = context.applicationContext
 
-    override fun read(file: String): Map<String, Any> =
-        app.getSharedPreferences(file, Context.MODE_PRIVATE).all.filterValues { it != null }.mapValues { it.value!! }
+    override fun read(file: String): Map<String, Any> {
+        val all = app.getSharedPreferences(file, Context.MODE_PRIVATE).all.filterValues { it != null }.mapValues { it.value!! }
+        if (file != BackupSpec.DEVICES_FILE) return all
+        // v telefóne sú local keys zašifrované Keystore kľúčom; záloha ich má (ako doteraz) nešifrované vo vnútri šifrovaného súboru
+        return all.mapValues { (k, v) -> if (k == "devices" && v is String) DeviceStore.plainJson(v) else v }
+    }
 
-    override fun write(file: String, values: Map<String, Any>) {
+    override fun write(file: String, values0: Map<String, Any>) {
         val p = app.getSharedPreferences(file, Context.MODE_PRIVATE)
+        val values = if (file != BackupSpec.DEVICES_FILE) values0
+        else values0.mapValues { (k, v) -> if (k == "devices" && v is String) DeviceStore.sealedJson(v) else v }
         val e = p.edit()
+        // obnovený zoznam zariadení nahrádza aj poškodený zoznam – blokovanie ukladania sa zruší
+        if (file == BackupSpec.DEVICES_FILE && values.containsKey("devices")) e.remove(DeviceStore.KEY_BROKEN)
         p.all.keys.filter { BackupSpec.included(file, it) && it !in values }.forEach { e.remove(it) }
         for ((k, v) in values) {
             when (v) {
@@ -54,6 +55,18 @@ class AndroidPrefsSink(context: Context) : PrefsSink {
             }
         }
         if (!e.commit()) throw IOException("Nastavenia sa nepodarilo zapísať ($file)")
+    }
+
+    override fun discard(file: String) {
+        val xml = File(File(app.applicationInfo.dataDir, "shared_prefs"), "$file.xml")
+        if (!xml.exists()) return
+        val p = app.getSharedPreferences(file, Context.MODE_PRIVATE)
+        val e = p.edit()
+        p.all.keys.filter { BackupSpec.included(file, it) }.forEach { e.remove(it) }
+        if (!e.commit()) throw IOException("Nastavenia sa nepodarilo zapísať ($file)")
+        if (p.all.isEmpty()) {
+            if (!app.deleteSharedPreferences(file) && xml.exists()) xml.delete()
+        }
     }
 
     override fun readSecrets(): Pair<JSONObject?, JSONObject?> {
@@ -72,33 +85,9 @@ class AndroidPrefsSink(context: Context) : PrefsSink {
 
 /** Šifrovanie interných súborov zálohy (poistná záloha, denník, heslo automatickej zálohy) kľúčom v Android Keystore. */
 object KeystoreSealer : Sealer {
-    private const val ALIAS = "domov_backup"
+    override fun seal(data: ByteArray): ByteArray = SecretBox.seal(SecretBox.BACKUP, data)
 
-    private fun key(): SecretKey {
-        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
-        val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        gen.init(
-            KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build(),
-        )
-        return gen.generateKey()
-    }
-
-    override fun seal(data: ByteArray): ByteArray {
-        val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.ENCRYPT_MODE, key())
-        return c.iv + c.doFinal(data)
-    }
-
-    override fun open(data: ByteArray): ByteArray {
-        val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, data, 0, 12))
-        return c.doFinal(data, 12, data.size - 12)
-    }
+    override fun open(data: ByteArray): ByteArray = SecretBox.open(SecretBox.BACKUP, data)
 }
 
 /** Nastavenia automatickej zálohy (samy nie sú súčasťou zálohy). */
@@ -115,7 +104,16 @@ data class AutoBackup(
 object BackupManager {
     private fun prefs(context: Context) = context.getSharedPreferences("domov_backup_auto", Context.MODE_PRIVATE)
 
-    fun applier(context: Context) = BackupApplier(File(context.noBackupFilesDir, "zaloha"), AndroidPrefsSink(context), KeystoreSealer)
+    fun applier(context: Context) = BackupApplier(
+        File(context.noBackupFilesDir, "zaloha"),
+        AndroidPrefsSink(context),
+        KeystoreSealer,
+        extras = object : BackupExtras {
+            override fun snapshot() = ChatEngine.extrasSnapshot(context)
+            override fun apply(chat: org.json.JSONArray?, files: org.json.JSONObject?, replace: Boolean) =
+                ChatEngine.extrasApply(context, chat, files, replace)
+        },
+    )
 
     private fun version(context: Context): Pair<String, Int> = runCatching {
         val pi = context.packageManager.getPackageInfo(context.packageName, 0)

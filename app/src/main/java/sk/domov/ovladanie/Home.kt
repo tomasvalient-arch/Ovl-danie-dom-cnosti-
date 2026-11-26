@@ -13,7 +13,6 @@ import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Arrangement
@@ -34,10 +33,9 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -136,7 +134,9 @@ internal fun HomeMain(
     }
     // stav automatiky a domácnosti sa prečíta znova po návrate z nastavení, po návrate do appky, pri zmene uložených
     // údajov (služba zapíše nový stav) a pre istotu každých 5 min – len kým je appka na obrazovke
-    val tick = rememberPresenceTick()
+    // pruh automatiky: pri odchádzaní sa prepočíta každých 20 s (odpočet)
+    var autoExtra by remember { mutableIntStateOf(0) }
+    val tick = rememberPresenceTick() + autoExtra
     // čas a zdroj posledného stavu zariadení (dlaždice bez WiFi) – obnoví sa pri každom zápise do cache
     var cacheTick by remember { mutableIntStateOf(0) }
     androidx.compose.runtime.DisposableEffect(Unit) {
@@ -150,16 +150,20 @@ internal fun HomeMain(
     val cfg = remember(pagesOpen, tick) { PresenceStore.config(context) }
     val status = remember(pagesOpen, tick) { PresenceStore.status(context) }
     val members = remember(pagesOpen, tick) { HouseholdStore.members(context) }
+    val serviceRunning = remember(pagesOpen, tick) { PresenceService.isRunning }
+    LaunchedEffect(status.state, status.since) {
+        while (status.state == PresenceState.LEAVING) { delay(20_000); autoExtra++ }
+    }
     val selfName = remember(pagesOpen) { HouseholdStore.customName(context) ?: "ty" }
     // nákupný zoznam: znova sa načíta po návrate z obrazovky Nákup
     val shopItems = remember(pagesOpen, tick) { ShoppingStore.items(context) }
     // udalosti a narodeniny: znova sa načítajú po návrate z obrazovky Udalosti
-    val eventItems = remember(pagesOpen, tick) { EventsStore.events(context) }
+    val eventItems = remember(pagesOpen, tick) { EventsStore.visible(context) }
 
     fun values(d: Device): Map<String, Any> = deviceValues(d, states, known)
 
     val now = System.currentTimeMillis()
-    val homeNames: String? = if (demo) "Tomáš, Priateľka" else {
+    val homeNames: String? = if (demo) "Tomáš, Jana" else {
         val others = members.filter { HouseDecision.isHome(it, now, cfg.memberWindowMin * 60_000L) }.sortedBy { it.name }.map { it.name }
         val me = if (cfg.enabled && status.state == PresenceState.HOME) listOf(selfName) else emptyList()
         (me + others).joinToString(", ").ifBlank { null }
@@ -173,12 +177,11 @@ internal fun HomeMain(
     val moon by rememberMoonPhase(tick)
 
     var confirmAllOff by remember { mutableStateOf(false) }
-    var confirmNight by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf<Device?>(null) }
 
     val groups = Groups.arrange(devices, ::values)
-    // „Pridať“ (tlačidlo + v hlavičke) = rovno hľadanie v sieti; Tuya cloud, import a ručné zadanie sú v Nastaveniach › Zariadenia
-    val addAction: () -> Unit = {
+    // Pridať zariadenie: diskrétne + pri skupine Svetlá (alebo Nastavenia › Zariadenia).
+    val addDevice: () -> Unit = {
         if (wifiOn) onScan() else scope.launch {
             snackbar.currentSnackbarData?.dismiss()
             snackbar.showSnackbar("Zariadenia sa v sieti hľadajú len na domácej WiFi. Mimo domu ich pridáš v Nastaveniach › Zariadenia (Tuya cloud alebo import).")
@@ -199,13 +202,16 @@ internal fun HomeMain(
             // telefón (aj 360 dp) = 2 stĺpce, tablet / na šírku viac
             columns = GridCells.Adaptive(150.dp),
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         Text(
                             greetingText(firstName),
                             style = MaterialTheme.typography.headlineMedium,
@@ -214,13 +220,30 @@ internal fun HomeMain(
                             modifier = Modifier.weight(1f),
                         )
                         Surface(
-                            onClick = addAction,
-                            modifier = Modifier.size(44.dp),
-                            shape = CircleShape,
+                            onClick = { onPage("meals") },
+                            shape = RoundedCornerShape(22.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerLow,
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
                         ) {
-                            Box(contentAlignment = Alignment.Center) { Icon(Sym.add, contentDescription = "Pridať zariadenie") }
+                            Row(
+                                modifier = Modifier.height(44.dp).padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(Sym.skillet, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Text("Varíme", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        Surface(
+                            onClick = { confirmAllOff = true },
+                            shape = RoundedCornerShape(22.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+                            modifier = Modifier.size(44.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Icon(Sym.powerSettingsNew, contentDescription = "Všetko vypnúť", modifier = Modifier.size(22.dp))
+                            }
                         }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -232,28 +255,45 @@ internal fun HomeMain(
                     }
                 }
             }
-            item(span = { GridItemSpan(maxLineSpan) }, key = "weather") { WeatherCard(vm.weather, onSettings = { onPage("weather") }) }
-            item(span = { GridItemSpan(maxLineSpan) }, key = "meniny") { MeninyStrip(tick) }
-            if (moonVisible) {
-                moon?.let { info ->
-                    item(span = { GridItemSpan(maxLineSpan) }, key = "moon") { MoonStrip(info) }
+            // stav automatiky (od 1.40.0 namiesto karty Automatika): len keď sa niečo deje – služba nebeží alebo práve odchádzaš
+            if (!demo && cfg.enabled && !serviceRunning) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "auto") {
+                    AutomationCard(
+                        on = true,
+                        running = false,
+                        title = "Automatika nebeží",
+                        text = "Je zapnutá, ale služba na pozadí nebeží – príchod ani odchod sa teraz nevyhodnotí.",
+                        onStart = {
+                            PresenceService.sync(context)
+                            scope.launch { delay(1500); autoExtra++ }
+                        },
+                        onClick = { onPage(SettingsPage.AUTOMATION) },
+                    )
                 }
+            } else if (!demo && cfg.enabled && status.state == PresenceState.LEAVING) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "auto") {
+                    val ids = AutoDevices.departIds(cfg, devices, ::values)
+                    LeavingBanner(
+                        title = presenceStateText(status, cfg, now),
+                        text = namesText(devices.filter { it.id in ids }.map { it.name }).let { if (it == "Nič") "Nič sa nevypne" else it },
+                        onClick = { onPage(SettingsPage.AUTOMATION) },
+                    )
+                }
+            }
+            item(span = { GridItemSpan(maxLineSpan) }, key = "weather") {
+                WeatherCard(vm.weather, onSettings = { onPage("weather") }, moon = moon.takeIf { moonVisible })
+            }
+            if (moonVisible && moon != null && !weatherUi.settings.visible) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "moon") { MoonStrip(moon!!) }
             }
             // Mimo domácej WiFi ukazuje len malý chip „Bez WiFi“ v hlavičke; veľké červené upozornenie je na Domove zrušené (od 1.34.5)
             notice?.let { msg -> item(span = { GridItemSpan(maxLineSpan) }, key = "notice") { NoticeBanner(message = msg, onDismiss = { vm.dismissNotice() }) } }
 
-            item(span = { GridItemSpan(maxLineSpan) }, key = "actions") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                    ScenePill(Sym.doorOpen, "Príchod", highlighted = true) { vm.arriveNow() }
-                    ScenePill(Sym.bedtime, "Noc", highlighted = false) { confirmNight = true }
-                    ScenePill(Sym.powerSettingsNew, "Všetko vypnúť", highlighted = false) { confirmAllOff = true }
-                }
+            item(span = { GridItemSpan(maxLineSpan) }, key = "events") {
+                TodayRow(events = eventItems, onClick = { onPage("events") }, tick = tick, onAdd = { onPage("events-add") })
             }
             item(span = { GridItemSpan(maxLineSpan) }, key = "shop") {
-                ShoppingRow(items = shopItems, onClick = { onPage("shopping") })
-            }
-            item(span = { GridItemSpan(maxLineSpan) }, key = "events") {
-                EventsRow(events = eventItems, onClick = { onPage("events") })
+                ShoppingRow(items = shopItems, onMine = { onPage("shopping-mine") }, onShared = { onPage("shopping-shared") })
             }
 
             if (devices.isEmpty()) {
@@ -273,6 +313,16 @@ internal fun HomeMain(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (name == Groups.LIGHTS) {
+                            IconButton(onClick = addDevice, modifier = Modifier.size(28.dp)) {
+                                Icon(
+                                    Sym.add,
+                                    contentDescription = "Pridať zariadenie",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
                     }
                 }
                 items(list, key = { it.id }) { device ->
@@ -302,6 +352,24 @@ internal fun HomeMain(
                     )
                 }
             }
+            if (devices.isNotEmpty() && groups.none { it.first == Groups.LIGHTS }) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "g_${Groups.LIGHTS}_empty") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp, start = 4.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(Groups.LIGHTS, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        IconButton(onClick = addDevice, modifier = Modifier.size(28.dp)) {
+                            Icon(
+                                Sym.add,
+                                contentDescription = "Pridať zariadenie",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+            }
         }
         }
     }
@@ -322,29 +390,7 @@ internal fun HomeMain(
                 )
             },
             confirmButton = { DialogPrimaryButton(onClick = { confirmAllOff = false; vm.allOff() }, enabled = names.isNotEmpty()) { Text("Vypnúť") } },
-            dismissButton = { DialogTextButton(onClick = { confirmAllOff = false; onPage("presence") }) { Text("Zmeniť výber") } },
-        )
-    }
-    if (confirmNight) {
-        val scene by vm.night.collectAsState()
-        val dim = devices.filter { it.id in scene.dimIds }.map { it.name }
-        val off = Scenes.nightOffIds(scene, devices, ::values).let { ids -> devices.filter { it.id in ids }.map { it.name } }
-        DomovAlert(
-            onDismissRequest = { confirmNight = false },
-            icon = { Icon(Sym.bedtime, null) },
-            title = { Text("Scéna Noc") },
-            text = {
-                Text(
-                    buildString {
-                        if (dim.isNotEmpty()) append("Stlmí na ${scene.dimPercent} % (teplá biela): ${dim.joinToString()}.\n\n")
-                        else append("Zatiaľ nie je vybraté svetlo, ktoré ostane stlmené (nastavíš cez Upraviť).\n\n")
-                        append(if (off.isEmpty()) "Nič sa nevypne." else "Vypne: ${off.joinToString()}.")
-                        if (!wifiOn) append("\n\nNoc funguje len na domácej WiFi.")
-                    },
-                )
-            },
-            confirmButton = { DialogPrimaryButton(onClick = { confirmNight = false; vm.runNight() }, enabled = wifiOn) { Text("Spustiť") } },
-            dismissButton = { DialogTextButton(onClick = { confirmNight = false; onPage("night") }) { Text("Upraviť") } },
+            dismissButton = { DialogTextButton(onClick = { confirmAllOff = false; onPage(AutoPage.DEPART) }) { Text("Zmeniť výber") } },
         )
     }
     moving?.let { d ->
@@ -372,7 +418,7 @@ private fun greetingText(name: String?): String {
 }
 
 @Composable
-private fun InfoChip(icon: ImageVector, text: String, error: Boolean = false, good: Boolean = false) {
+internal fun InfoChip(icon: ImageVector, text: String, error: Boolean = false, good: Boolean = false) {
     val c = Domov.colors
     val scheme = MaterialTheme.colorScheme
     val bg = when {
@@ -455,6 +501,26 @@ internal fun AutomationCard(on: Boolean, running: Boolean, title: String, text: 
     }
 }
 
+/** Pruh na Domove počas odchádzania: „Odchádzaš – vypnem o 7 min“ a čo sa vypne. Ťuk = Nastavenia › Automatika. */
+@Composable
+private fun LeavingBanner(title: String, text: String, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    DomovCard(onClick = onClick, padding = 14.dp, color = scheme.primaryContainer.copy(alpha = 0.12f), border = scheme.primaryContainer.copy(alpha = 0.35f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(40.dp).background(scheme.primaryContainer.copy(alpha = 0.18f), RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Sym.locationHome, null, tint = scheme.primaryContainer, modifier = Modifier.size(22.dp)) }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(text, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Sym.chevronRight, null, tint = scheme.outline)
+        }
+    }
+}
+
 /** „HH:MM“ dnes, inak „d.M. H:mm“. */
 internal fun shortTime(t: Long, now: Long = System.currentTimeMillis()): String {
     val a = java.util.Calendar.getInstance().apply { timeInMillis = t }
@@ -475,26 +541,6 @@ internal fun presenceStateText(s: PresenceStatus, cfg: PresenceConfig, now: Long
 }
 
 /** Scéna ako malá pilulka (Príchod, Noc, Všetko vypnúť). Zvýraznená = jantárová. */
-@Composable
-private fun ScenePill(icon: ImageVector, label: String, highlighted: Boolean, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Surface(
-        onClick = onClick,
-        modifier = Modifier.height(44.dp),
-        shape = RoundedCornerShape(22.dp),
-        color = if (highlighted) scheme.primaryContainer else scheme.surfaceContainerLow,
-        contentColor = if (highlighted) scheme.onPrimaryContainer else scheme.onSurface,
-        border = BorderStroke(1.dp, if (highlighted) scheme.primaryContainer else scheme.surfaceVariant),
-    ) {
-        Row(modifier = Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(7.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
-        }
-    }
-}
-
-/** Dlaždica zariadenia: zapnuté = jantárová, vypnuté = tmavá, offline = červená ikona. Dlhé podržanie = presun. */
 @Composable
 private fun Tile(
     device: Device,
@@ -660,10 +706,10 @@ private fun MoveDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Poradie v skupine", style = MaterialTheme.typography.titleSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    androidx.compose.material3.OutlinedButton(onClick = { onMove(-1) }) {
+                    androidx.compose.material3.FilledTonalButton(onClick = { onMove(-1) }) {
                         Icon(Sym.arrowUpward, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Dopredu")
                     }
-                    androidx.compose.material3.OutlinedButton(onClick = { onMove(1) }) {
+                    androidx.compose.material3.FilledTonalButton(onClick = { onMove(1) }) {
                         Icon(Sym.arrowDownward, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Dozadu")
                     }
                 }
@@ -720,12 +766,12 @@ private fun EmptyHome(
             style = MaterialTheme.typography.bodyMedium,
         )
         androidx.compose.material3.Button(onClick = onJoin, modifier = Modifier.fillMaxWidth()) { Text("Pripojiť sa k domácnosti (QR z iného telefónu)") }
-        androidx.compose.material3.OutlinedButton(onClick = onScan, enabled = wifiOn, modifier = Modifier.fillMaxWidth()) { Text("Hľadať zariadenia v sieti") }
-        androidx.compose.material3.OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("Import devices.json / zálohy") }
-        androidx.compose.material3.OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth()) { Text("Obnoviť celú zálohu (.domov)") }
-        androidx.compose.material3.OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { Text("Pridať ručne") }
+        androidx.compose.material3.FilledTonalButton(onClick = onScan, enabled = wifiOn, modifier = Modifier.fillMaxWidth()) { Text("Hľadať zariadenia v sieti") }
+        androidx.compose.material3.FilledTonalButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("Import devices.json / zálohy") }
+        androidx.compose.material3.FilledTonalButton(onClick = onRestore, modifier = Modifier.fillMaxWidth()) { Text("Obnoviť celú zálohu (.domov)") }
+        androidx.compose.material3.FilledTonalButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { Text("Pridať ručne") }
         if (!cloudSet) {
-            androidx.compose.material3.OutlinedButton(onClick = onGuide, modifier = Modifier.fillMaxWidth()) { Text("Sprievodca: local keys z Tuya cloudu") }
+            androidx.compose.material3.FilledTonalButton(onClick = onGuide, modifier = Modifier.fillMaxWidth()) { Text("Sprievodca: local keys z Tuya cloudu") }
             Text(
                 "Nepovinné: s Tuya cloudom appka dotiahne local keys a názvy sama. Bez neho funguje všetko rovnako.",
                 style = MaterialTheme.typography.bodySmall,
@@ -747,24 +793,8 @@ internal fun NightSceneScreen(vm: HomeViewModel, onBack: () -> Unit) {
     val offIds = Scenes.nightOffIds(scene.copy(dimIds = emptySet()), devices, ::values)
     var percent by remember(scene.dimPercent) { androidx.compose.runtime.mutableFloatStateOf(scene.dimPercent.toFloat()) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Scéna Noc") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Sym.arrowBack, contentDescription = "Späť") } },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                "Tlačidlo Noc na hlavnej obrazovke vypne vybrané zariadenia a vybrané svetlá nechá stlmené na teplú bielu " +
-                    "(napr. lampa pri posteli alebo chodba). Funguje na domácej WiFi.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    SettingsSubPage("Scéna Noc", onBack, subtitle = "Stlmené svetlá a čo vypnúť") {
+            InfoHint("Tlačidlo Noc na hlavnej obrazovke vypne vybrané zariadenia a vybrané svetlá nechá stlmené na teplú bielu. Funguje na domácej WiFi.")
             SectionLabel("Nechať svietiť stlmené")
             DomovCard(padding = 8.dp, spacing = 0.dp) {
                 val lights = devices.filter { Scenes.canDim(it, values(it)) || AutoDevices.kind(it, values(it)) == AutoKind.LIGHT }
@@ -801,7 +831,6 @@ internal fun NightSceneScreen(vm: HomeViewModel, onBack: () -> Unit) {
             TextButton(onClick = { vm.saveNight(NightScene(dimIds = scene.dimIds, dimPercent = scene.dimPercent)) }) {
                 Text("Predvolený výber (všetky svetlá a zásuvky)")
             }
-        }
     }
 }
 

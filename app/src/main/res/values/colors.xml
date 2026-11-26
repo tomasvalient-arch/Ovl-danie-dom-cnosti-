@@ -9,4 +9,14 @@
     <color name="widget_icon_on">#2A1700</color>
     <color name="widget_icon_off">#66554A</color>
     <color name="widget_error">#BA1A1A</color>
+    <color name="shop_widget_bg">#FFFFFFFF</color>
+    <color name="shop_widget_stroke">#FFE9DAC9</color>
+    <color name="shop_widget_divider">#FFF0E4D7</color>
+    <color name="shop_widget_text">#241B13</color>
+    <color name="shop_widget_muted">#66554A</color>
+    <color name="shop_widget_accent">#FFB35A</color>
+    <color name="shop_widget_on_accent">#2A1700</color>
+    <color name="shop_widget_ring">#8C7B6C</color>
+    <color name="shop_widget_done">#9A8A7C</color>
+    <color name="shop_widget_pill">#FFF3E7DA</color>
 </resources>

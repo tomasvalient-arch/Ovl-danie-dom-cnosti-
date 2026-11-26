@@ -17,6 +17,7 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
@@ -117,18 +118,28 @@ object HomeNet {
         return HomeNetwork(
             gateway = gateway,
             subnet = addr.subnet,
-            ssid = ssid(context),
+            ssid = ssid(context, network),
             dhcpServer = dhcp,
         )
     }
 
-    /** Názov WiFi – Android ho od verzie 8.1/10 prezradí len s povolením polohy; inak prázdne. */
-    @Suppress("DEPRECATION")
-    private fun ssid(context: Context): String {
+    /**
+     * Názov WiFi – Android ho od verzie 8.1/10 prezradí len s povolením presnej polohy (ACCESS_FINE_LOCATION), ktoré appka
+     * zámerne nežiada; bez neho je výsledok prázdny a sieť sa spozná podľa routera, rozsahu a DHCP servera.
+     * Od Androidu 12 sa číta z NetworkCapabilities.transportInfo (WifiManager.connectionInfo je zastarané).
+     */
+    private fun ssid(context: Context, network: Network): String {
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         if (!granted) return ""
         return try {
-            HomeNetwork.cleanSsid(context.applicationContext.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid)
+            if (Build.VERSION.SDK_INT >= 31) {
+                val cm = context.getSystemService(ConnectivityManager::class.java)
+                val info = cm?.getNetworkCapabilities(network)?.transportInfo as? WifiInfo
+                HomeNetwork.cleanSsid(info?.ssid)
+            } else {
+                @Suppress("DEPRECATION")
+                HomeNetwork.cleanSsid(context.applicationContext.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid)
+            }
         } catch (e: Exception) {
             ""
         }
@@ -482,7 +493,7 @@ object PresenceNotify {
 
     fun clearServiceText() { lastServiceText = null }
 
-    /** Nadpis pri príchode: „Vitaj doma, Tomáš“ (meno z Automatika › Domácnosť), bez mena „Vitaj doma“. */
+    /** Nadpis pri príchode: „Vitaj doma, Tomáš“ (meno z Nastavenia › Domácnosť), bez mena „Vitaj doma“. */
     fun arriveTitle(context: Context): String =
         HouseholdStore.customName(context)?.let { "Vitaj doma, $it" } ?: "Vitaj doma"
 
@@ -660,6 +671,7 @@ class PresenceService : Service() {
             }
         }
         runCatching { ensureFryerJob() }
+        runCatching { ChatEngine.startListening(this); ChatEngine.schedule(this) }
         when (intent?.action) {
             ACTION_TICK -> scope.launch { onEvent(PresenceEvent.Tick(System.currentTimeMillis())) }
             ACTION_GUARD -> scope.launch { runGuardFromAlarm() }
@@ -1012,6 +1024,7 @@ class PresenceService : Service() {
     /** Obnova v už bežiacej službe bez startForegroundService (to by znova vyvesilo odsunutú notifikáciu). */
     internal fun reloadWhileRunning() {
         runCatching { ensureFryerJob() }
+        runCatching { ChatEngine.startListening(this); ChatEngine.schedule(this) }
         scope.launch {
             ensureHousehold()
             mutex.withLock { reschedule(PresenceStore.status(this@PresenceService)) }
@@ -1102,7 +1115,15 @@ class PresenceReceiver : BroadcastReceiver() {
                 BackupManager.recover(context)
                 PresenceService.sync(context)
                 BackupManager.schedule(context)
+                HouseSyncEngine.schedule(context)
+                HouseSyncEngine.request(context)
+                ChatEngine.schedule(context)
+                ChatEngine.startListening(context)
+                ChatEngine.request(context)
                 EventReminders.check(context)
+                // ranný prehľad: nastaviť budík a poslať, ak telefón bol ráno vypnutý (len keď je zapnutý)
+                val pending = goAsync()
+                MorningBriefAlarm.check(context) { pending.finish() }
             }
             PresenceService.ACTION_TICK, PresenceService.ACTION_GUARD, PresenceService.ACTION_BEAT -> {
                 val svc = PresenceService.instance

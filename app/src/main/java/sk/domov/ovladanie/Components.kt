@@ -34,6 +34,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -205,7 +206,7 @@ fun DomovChip(label: String, selected: Boolean, enabled: Boolean = true, icon: I
         selected = selected,
         onClick = onClick,
         enabled = enabled,
-        label = { Text(label) },
+        label = { Text(label, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) },
         leadingIcon = icon?.let { { Icon(it, contentDescription = null, modifier = Modifier.size(18.dp)) } },
         shape = RoundedCornerShape(12.dp),
         colors = FilterChipDefaults.filterChipColors(
@@ -248,14 +249,16 @@ fun Segmented(options: List<Pair<String, ImageVector?>>, selected: Int, enabled:
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val tint = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                if (sel) {
-                    Icon(Sym.check, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                } else if (icon != null) {
+                if (icon != null) {
                     Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                 }
-                Text(label, style = MaterialTheme.typography.labelLarge, color = tint)
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = tint,
+                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                )
             }
         }
     }
@@ -512,13 +515,152 @@ internal fun CheckRow(
         return
     }
     Row(
-        modifier = Modifier.fillMaxWidth().clickable(enabled = enabled) { onChange(!checked) }.padding(vertical = verticalPadding),
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+            .padding(vertical = verticalPadding + 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        androidx.compose.material3.Checkbox(checked = checked, onCheckedChange = onChange, enabled = enabled)
         Column(Modifier.weight(1f)) {
             Text(title, style = titleStyle)
             if (!caption.isNullOrBlank()) Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(12.dp))
+        DomovSwitch(checked = checked, onCheckedChange = null, enabled = enabled)
+    }
+}
+
+enum class NoticeKind { Info, Warning, Good }
+
+/** Kompaktná tónovaná kartička pre upozornenie alebo krátku správu (nie stena textu). */
+@Composable
+fun NoticeCard(text: String, kind: NoticeKind = NoticeKind.Info, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    val c = Domov.colors
+    val bg = when (kind) {
+        NoticeKind.Warning -> scheme.errorContainer
+        NoticeKind.Good -> c.goodContainer
+        NoticeKind.Info -> scheme.surfaceContainerHigh
+    }
+    val fg = when (kind) {
+        NoticeKind.Warning -> scheme.onErrorContainer
+        NoticeKind.Good -> c.good
+        NoticeKind.Info -> scheme.onSurface
+    }
+    val icon = when (kind) {
+        NoticeKind.Warning -> Sym.warning
+        NoticeKind.Good -> Sym.check
+        NoticeKind.Info -> Sym.info
+    }
+    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = bg) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
+            Text(text, style = MaterialTheme.typography.bodySmall, color = fg, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+/** Dlhší pomocný text skrytý za ikonou; ťuknutím sa rozbalí. */
+@Composable
+fun InfoHint(text: String, modifier: Modifier = Modifier) {
+    var open by remember { mutableStateOf(false) }
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { open = !open }
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Sym.info,
+                contentDescription = if (open) "Menej" else "Viac informácií",
+                tint = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (open) "Menej" else "Viac informácií",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (open) {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 30.dp, end = 8.dp, bottom = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+fun StatusPill(text: String, good: Boolean = false, modifier: Modifier = Modifier) {
+    val c = Domov.colors
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(20.dp),
+        color = if (good) c.goodContainer else scheme.surfaceContainerHighest,
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (good) c.good else scheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            maxLines = 1,
+        )
+    }
+}
+
+/** Riadok člena domácnosti: iniciála, meno, stavová pilulka, voliteľne odstránenie. */
+@Composable
+fun PersonRow(
+    name: String,
+    caption: String? = null,
+    status: String? = null,
+    statusGood: Boolean = false,
+    self: Boolean = false,
+    onRemove: (() -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val initial = name.trim().firstOrNull()?.uppercase() ?: "?"
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(CircleShape).background(scheme.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(initial, style = MaterialTheme.typography.titleMedium, color = scheme.onPrimaryContainer)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (self) "$name · tento telefón" else name,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!caption.isNullOrBlank()) {
+                Text(caption, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (status != null) {
+            Spacer(Modifier.width(8.dp))
+            StatusPill(status, good = statusGood)
+        }
+        if (onRemove != null) {
+            IconButton(onClick = onRemove) {
+                Icon(Sym.delete, contentDescription = "Odstrániť", tint = scheme.outline, modifier = Modifier.size(20.dp))
+            }
         }
     }
 }

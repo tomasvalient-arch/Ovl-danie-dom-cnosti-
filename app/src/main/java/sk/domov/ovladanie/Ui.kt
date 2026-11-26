@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -38,13 +39,16 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.clickable
@@ -57,7 +61,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
 @Composable
-fun HomeScreen(vm: HomeViewModel) {
+fun HomeScreen(vm: HomeViewModel, openPage: String? = null, onPageOpened: () -> Unit = {}) {
     val devices by vm.devices.collectAsState()
     val states by vm.states.collectAsState()
     val wifi by vm.wifi.collectAsState()
@@ -66,7 +70,7 @@ fun HomeScreen(vm: HomeViewModel) {
     val wifiOn = wifi != null || demo
 
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
-    // karta dolnej lišty (Domov / Automatika / Kúrenie / Nastavenia)
+    // karta dolnej lišty (Domov / Kúrenie / Počítač / Nastavenia); len v rememberSaveable (názov enumu), nikam sa neukladá natrvalo
     var tab by rememberSaveable { mutableStateOf(HomeTab.HOME) }
     var showAdd by rememberSaveable { mutableStateOf(false) }
     var showImport by rememberSaveable { mutableStateOf(false) }
@@ -77,12 +81,49 @@ fun HomeScreen(vm: HomeViewModel) {
     var pendingPower by remember { mutableStateOf<Triple<Device, String, Map<String, Any>>?>(null) }
     val cloud by vm.cloud.collectAsState()
     val scope = rememberCoroutineScope()
-    // otvorené obrazovky Tuya cloud / návod / pomoc (posledná je navrchu)
-    val pages = remember { mutableStateListOf<String>() }
+    // otvorené obrazovky Tuya cloud / návod / pomoc (posledná je navrchu).
+    // rememberSaveable: pri otočení a po reštarte procesu ostane zásobník aj posun.
+    val pages = rememberSaveable(
+        saver = listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<String>, String>(
+            save = { it.toList() },
+            restore = { mutableStateListOf<String>().also { dst -> dst.addAll(it) } },
+        ),
+    ) { mutableStateListOf() }
+    // posun (a iný rememberSaveable) ostane, kým je obrazovka v zásobníku alebo na karte
+    val savedStates = rememberSaveableStateHolder()
+    fun pushPage(route: String) {
+        if (pages.lastOrNull() != route) pages += route
+    }
+    fun popPage() {
+        if (pages.isEmpty()) return
+        val gone = pages.removeAt(pages.lastIndex)
+        savedStates.removeState(gone)
+    }
+    fun closeDevice() {
+        openId?.let { savedStates.removeState("device:$it") }
+        openId = null
+    }
     var showSync by rememberSaveable { mutableStateOf(false) }
     var noCloudFor by remember { mutableStateOf<FoundDevice?>(null) }
     var addHint by remember { mutableStateOf<String?>(null) }
     val cloudBusy = remember { mutableStateListOf<String>() }
+
+    // otvorenie obrazovky zvonku (ťuknutie na názov widgetu Nákup)
+    var chatThread by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(openPage) {
+        if (openPage != null) {
+            closeDevice()
+            if (openPage == "chat" || openPage.startsWith("chat:")) {
+                pages.clear()
+                tab = HomeTab.CHAT
+                chatThread = openPage.substringAfter(":", "").takeIf { it.isNotBlank() && it != "chat" }
+            } else {
+                tab = HomeTab.HOME
+                pushPage(openPage)
+            }
+            onPageOpened()
+        }
+    }
 
     /** „Pridať“ pri nájdenom zariadení: s cloudom jedným ťuknutím, bez neho ručné zadanie. */
     fun addFoundDevice(found: FoundDevice) {
@@ -103,77 +144,151 @@ fun HomeScreen(vm: HomeViewModel) {
     }
 
     val open = devices.find { it.id == openId }
-    BackHandler(enabled = open != null) { openId = null }
-    BackHandler(enabled = open == null && pages.isNotEmpty()) { pages.removeAt(pages.size - 1) }
+    BackHandler(enabled = pages.isNotEmpty()) { popPage() }
+    BackHandler(enabled = open != null && pages.isEmpty()) { closeDevice() }
     // na inej karte ako Domov sa Späť najprv vráti na Domov, až potom zavrie appku
     BackHandler(enabled = open == null && pages.isEmpty() && tab != HomeTab.HOME) { tab = HomeTab.HOME }
 
-    if (open == null && pages.isNotEmpty()) {
+    if (pages.isNotEmpty()) {
+        savedStates.SaveableStateProvider(pages.last()) {
         when (pages.last()) {
             "cloud" -> CloudSettingsScreen(
                 vm = vm,
-                onBack = { pages.removeAt(pages.size - 1) },
-                onGuide = { pages += "guide" },
+                onBack = { popPage() },
+                onGuide = { pushPage("guide") },
             )
             "guide" -> CloudGuideScreen(
-                onBack = { pages.removeAt(pages.size - 1) },
+                onBack = { popPage() },
                 onEnterKeys = {
                     // ak sme prišli z nastavení, vrátime sa tam; inak ich otvoríme
-                    pages.removeAt(pages.size - 1)
-                    if (pages.lastOrNull() != "cloud") pages += "cloud"
+                    popPage()
+                    if (pages.lastOrNull() != "cloud") pushPage("cloud")
                 },
             )
-            "presence" -> PresenceScreen(
+            "presence" -> PresenceWifiScreen(vm = vm, onBack = { popPage() })
+            AutoPage.WIFI -> PresenceWifiScreen(vm = vm, onBack = { popPage() })
+            AutoPage.DELAY -> PresenceDelayScreen(vm = vm, onBack = { popPage() })
+            AutoPage.ARRIVE -> PresenceArriveScreen(vm = vm, onBack = { popPage() })
+            AutoPage.DEPART -> PresenceDepartScreen(vm = vm, onBack = { popPage() }, onCloud = { pushPage("cloud") })
+            AutoPage.DARK -> PresenceDarkScreen(vm = vm, onBack = { popPage() })
+            AutoPage.GUARD -> PresenceGuardScreen(vm = vm, onBack = { popPage() })
+            AutoPage.TRY -> PresenceTryScreen(vm = vm, onBack = { popPage() })
+            AutoPage.HISTORY -> PresenceHistoryScreen(vm = vm, onBack = { popPage() })
+            AutoPage.BRIEF -> MorningBriefScreen(onBack = { popPage() })
+            AutoPage.NOTIFY_DONE -> PresenceNotifyDoneScreen(
                 vm = vm,
-                onBack = { pages.removeAt(pages.size - 1) },
-                onCloud = { pages += "cloud" },
-                onHousehold = { pages += "household" },
+                onBack = { popPage() },
+                onDepart = { pushPage(AutoPage.DEPART) },
             )
-            "household" -> HouseholdScreen(
-                onBack = { pages.removeAt(pages.size - 1) },
-                onShare = { pages += "share" },
-                onJoin = { pages += "join" },
+            "household", SettingsPage.HOUSEHOLD -> HouseholdSettingsScreen(
+                onBack = { popPage() },
+                onShare = { pushPage("share") },
+                onJoin = { pushPage("join") },
             )
-            "pc" -> PcScreen(onBack = { pages.removeAt(pages.size - 1) }, onAdd = { pages += "pc-add" })
-            "pc-add" -> PcAddScreen(onBack = { pages.removeAt(pages.size - 1) })
-            "share" -> ShareAppScreen(vm = vm, onBack = { pages.removeAt(pages.size - 1) })
-            "join" -> JoinHouseholdScreen(vm = vm, onBack = { pages.removeAt(pages.size - 1) })
-            "night" -> NightSceneScreen(vm = vm, onBack = { pages.removeAt(pages.size - 1) })
-            "shopping" -> ShoppingScreen(onBack = { pages.removeAt(pages.size - 1) })
-            "events" -> EventsScreen(onBack = { pages.removeAt(pages.size - 1) })
-            "backup" -> BackupScreen(onBack = { pages.removeAt(pages.size - 1) })
-            "weather" -> WeatherSettingsScreen(vm.weather, onBack = { pages.removeAt(pages.size - 1) })
+            "pc" -> PcScreen(onBack = { popPage() }, onAdd = { pushPage("pc-add") })
+            "pc-add" -> PcAddScreen(onBack = { popPage() })
+            "pc-add-qr" -> PcAddScreen(onBack = { popPage() }, autoScan = true)
+            "share" -> ShareAppScreen(vm = vm, onBack = { popPage() })
+            "join" -> JoinHouseholdScreen(vm = vm, onBack = { popPage() })
+            "night" -> NightSceneScreen(vm = vm, onBack = { popPage() })
+            "shopping" -> ShoppingScreen(onBack = { popPage() })
+            "shopping-mine" -> ShoppingScreen(onBack = { popPage() }, initialView = ShopView.MINE)
+            "shopping-shared" -> ShoppingScreen(onBack = { popPage() }, initialView = ShopView.SHARED)
+            "events" -> CalendarScreen(onBack = { popPage() })
+            "events-add" -> CalendarScreen(onBack = { popPage() }, startAdd = true)
+            "meals" -> MealsScreen(onBack = { popPage() })
+            "meals-pantry" -> MealsScreen(onBack = { popPage() }, startPantry = true)
+            "backup" -> BackupScreen(onBack = { popPage() })
+            "weather" -> WeatherSettingsScreen(vm.weather, onBack = { popPage() })
             "heat-login" -> HeatLoginScreen(
                 vm = vm,
-                onBack = { pages.removeAt(pages.size - 1) },
+                onBack = { popPage() },
                 onDone = {
                     // po prihlásení rovno na prehľad kúrenia: karta Kúrenie, alebo stránka kúrenia, ak sme prišli odinakiaľ
-                    pages.removeAt(pages.size - 1)
+                    popPage()
                     if (pages.isEmpty()) tab = HomeTab.HEAT
-                    else if (pages.lastOrNull()?.startsWith("heat") != true) pages += "heat"
+                    else if (pages.lastOrNull()?.startsWith("heat") != true) pushPage("heat")
                 },
             )
-            "heat" -> HeatScreen(vm = vm, zoneId = null, onBack = { pages.removeAt(pages.size - 1) }, onAccount = { pages += "heat-login" })
-            else -> if (pages.last().startsWith("heat:")) {
-                HeatScreen(vm = vm, zoneId = pages.last().removePrefix("heat:"), onBack = { pages.removeAt(pages.size - 1) }, onAccount = { pages += "heat-login" })
-            } else HelpScreen(onBack = { pages.removeAt(pages.size - 1) }, onGuide = { pages += "guide" })
+            // Nastavenia › kategórie (1.39.0); Späť (aj systémové) vráti na hlavný zoznam nastavení
+            SettingsPage.DEVICES_NOTIFY, "settings-fryer" -> SettingsDevicesPage(
+                vm = vm,
+                wifiOn = wifiOn,
+                cloudSet = cloud != null,
+                onBack = { popPage() },
+                onPage = { pushPage(it) },
+                onSync = { if (cloud == null) pushPage("cloud") else { showSync = true; vm.startSync() } },
+                onScan = { showScan = true; vm.startScan() },
+                onImport = { showImport = true },
+                onAddManual = { showAdd = true },
+                notifyOnly = true,
+            )
+            SettingsPage.DEVICES -> SettingsDevicesPage(
+                vm = vm,
+                wifiOn = wifiOn,
+                cloudSet = cloud != null,
+                onBack = { popPage() },
+                onPage = { pushPage(it) },
+                onSync = { if (cloud == null) pushPage("cloud") else { showSync = true; vm.startSync() } },
+                onScan = { showScan = true; vm.startScan() },
+                onImport = { showImport = true },
+                onAddManual = { showAdd = true },
+            )
+            SettingsPage.AUTOMATION -> SettingsAutomationPage(vm = vm, onBack = { popPage() }, onPage = { pushPage(it) })
+            SettingsPage.SCREEN -> SettingsScreenPage(vm = vm, onBack = { popPage() }, onPage = { pushPage(it) })
+            SettingsPage.NOTIFY -> SettingsNotifyPage(onBack = { popPage() }, onPage = { pushPage(it) })
+            SettingsPage.CALENDAR -> SettingsCalendarPage(onBack = { popPage() }, onPage = { pushPage(it) })
+            SettingsPage.ABOUT -> SettingsAboutPage(onBack = { popPage() }, onPage = { pushPage(it) })
+            SettingsPage.DATA -> SettingsDataPage(
+                hasDevices = devices.isNotEmpty(),
+                onBack = { popPage() },
+                onPage = { pushPage(it) },
+                onExport = { showExport = true },
+            )
+            SettingsPage.HELP -> SettingsHelpPage(onBack = { popPage() }, onPage = { pushPage(it) })
+            "heat" -> HeatScreen(vm = vm, zoneId = null, onBack = { popPage() }, onAccount = { pushPage("heat-login") })
+            else -> {
+                val setId = SettingsPage.deviceSettingsId(pages.last())
+                when {
+                    setId != null -> {
+                        DeviceSettingsScreen(
+                            vm = vm,
+                            deviceId = setId,
+                            onBack = { popPage() },
+                            onDeleted = {
+                                popPage()
+                                if (openId == setId) closeDevice()
+                            },
+                        )
+                    }
+                    pages.last().startsWith("heat:") -> HeatScreen(vm = vm, zoneId = pages.last().removePrefix("heat:"), onBack = { popPage() }, onAccount = { pushPage("heat-login") })
+                    else -> HelpScreen(onBack = { popPage() })
+                }
+            }
+        }
         }
     } else if (open != null) {
+        savedStates.SaveableStateProvider("device:${open.id}") {
         DeviceScreen(
             device = open,
             state = states[open.id] ?: DeviceState.Loading,
             wifiOn = wifiOn,
             notice = notice,
             vm = vm,
-            onBack = { openId = null },
+            onBack = { closeDevice() },
+            onSettings = { pushPage(SettingsPage.deviceSettings(open.id)) },
         )
+        }
     } else {
+        savedStates.SaveableStateProvider("tab:${tab.name}") {
         Scaffold(
             bottomBar = {
-                // červená bodka na karte Automatika, keď je zapnutá, ale služba nebeží (karta na Domove už nie je)
+                // červená bodka na Nastaveniach (› Automatika), keď je automatika zapnutá, ale služba nebeží
                 val ctx = LocalContext.current
                 val autoAlert = remember(tab, pages.size, states) { PresenceStore.config(ctx).enabled && !PresenceService.isRunning && !demo }
-                HomeBottomBar(selected = tab, onSelect = { tab = it }, automationAlert = autoAlert)
+                val chatTick = rememberChatTick()
+                val chatUnread = remember(chatTick) { ChatStore.unread(ctx) }
+                HomeBottomBar(selected = tab, onSelect = { tab = it }, automationAlert = autoAlert, chatUnread = chatUnread)
             },
         ) { tabPadding ->
             Box(Modifier.fillMaxSize().padding(tabPadding).consumeWindowInsets(tabPadding)) {
@@ -188,7 +303,7 @@ fun HomeScreen(vm: HomeViewModel) {
                         cloudSet = cloud != null,
                         pagesOpen = pages.size,
                         onOpen = { openId = it },
-                        onPage = { pages += it },
+                        onPage = { pushPage(it) },
                         onAdd = { showAdd = true },
                         onScan = { showScan = true; vm.startScan() },
                         onImport = { showImport = true },
@@ -206,22 +321,13 @@ fun HomeScreen(vm: HomeViewModel) {
                             if (warning != null) pendingPower = Triple(device, warning, cmd) else vm.setValues(device, cmd)
                         },
                     )
-                    HomeTab.AUTOMATION -> AutomationTab(vm = vm, devices = devices, pagesOpen = pages.size, onPage = { pages += it })
-                    HomeTab.HEAT -> HeatTab(vm = vm, onPage = { pages += it })
-                    HomeTab.SETTINGS -> SettingsTab(
-                        vm = vm,
-                        devices = devices,
-                        wifiOn = wifiOn,
-                        cloudSet = cloud != null,
-                        onPage = { pages += it },
-                        onSync = { if (cloud == null) pages += "cloud" else { showSync = true; vm.startSync() } },
-                        onScan = { showScan = true; vm.startScan() },
-                        onImport = { showImport = true },
-                        onExport = { showExport = true },
-                        onAddManual = { showAdd = true },
-                    )
+                    HomeTab.CHAT -> ChatTab(initialThread = chatThread, onConsumedInitial = { chatThread = null })
+                    HomeTab.HEAT -> HeatTab(vm = vm, onPage = { pushPage(it) })
+                    HomeTab.PC -> PcTab(wifiOn = wifiOn, pagesOpen = pages.size, onPage = { pushPage(it) })
+                    HomeTab.SETTINGS -> SettingsTab(vm = vm, devices = devices, cloudSet = cloud != null, onPage = { pushPage(it) })
                 }
             }
+        }
         }
     }
 
@@ -266,7 +372,7 @@ fun HomeScreen(vm: HomeViewModel) {
             isNew = true,
             hint = addHint ?: ("Zariadenie som našiel v sieti, IP adresu, Device ID a verziu som doplnil. " +
                 "Zadaj názov a local key (16 znakov). Local key zistíš cez tinytuya wizard (návod v README), " +
-                "alebo naimportuj devices.json cez Nastavenia → Import zariadení."),
+                "alebo naimportuj devices.json cez Nastavenia → Zariadenia → Import zariadení."),
             onDismiss = { addFound = null; addHint = null },
             onSave = { vm.addOrUpdate(it); addFound = null; addHint = null },
             onDelete = null,
@@ -274,7 +380,7 @@ fun HomeScreen(vm: HomeViewModel) {
     }
     noCloudFor?.let { found ->
         NoCloudDialog(
-            onGuide = { noCloudFor = null; showScan = false; vm.clearScan(); pages += "guide" },
+            onGuide = { noCloudFor = null; showScan = false; vm.clearScan(); pushPage("guide") },
             onManual = { noCloudFor = null; addHint = null; addFound = found },
             onDismiss = { noCloudFor = null },
         )
@@ -308,7 +414,7 @@ private fun FirstRunNameDialog() {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Meno sa ukáže v upozornení po príchode domov (napr. „Vitaj doma, Tomáš“) a ostatným telefónom v domácnosti. " +
-                    "Zmeníš ho v Automatika › Domácnosť.")
+                    "Zmeníš ho v Nastavenia › Domácnosť › Domácnosť a členovia.")
                 DomovTextField(name, { name = it }, label = { Text("Tvoje meno") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         },
@@ -505,10 +611,10 @@ internal fun DeviceDialog(
                 Text("Skupina na hlavnej obrazovke", style = MaterialTheme.typography.labelLarge)
                 val autoTitle = kind?.let { Groups.autoGroup(it) } ?: "podľa druhu"
                 val custom = remember { Groups.customGroups(allDevices) }
-                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = group.isBlank(), onClick = { group = "" }, label = { Text("Automaticky ($autoTitle)") })
+                ChipRow {
+                    DomovChip(label = "Automaticky ($autoTitle)", selected = group.isBlank(), onClick = { group = "" })
                     (custom + listOfNotNull(group.takeIf { it.isNotBlank() && it !in custom })).forEach { g ->
-                        FilterChip(selected = group == g, onClick = { group = g }, label = { Text(g) })
+                        DomovChip(label = g, selected = group == g, onClick = { group = g })
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -538,7 +644,7 @@ internal fun DeviceDialog(
                             titleStyle = MaterialTheme.typography.bodyMedium,
                         ) { arrive = it }
                     }
-                    if (!cfg0.enabled) Text("Automatika Príchod a odchod je teraz vypnutá – zapneš ju na karte Automatika.",
+                    if (!cfg0.enabled) Text("Automatika Príchod a odchod je teraz vypnutá – zapneš ju v Nastavenia › Automatika.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
@@ -569,11 +675,11 @@ internal fun DeviceDialog(
                         (known != null && runCatching { Light.isLight(known) || LightChannels.detect(device, known) != null }.getOrDefault(false)) ||
                         whiteSw.isNotBlank() || colourSw.isNotBlank() || (kind == AutoKind.LIGHT))
                     if (device != null && !isNew) {
-                        OutlinedButton(onClick = { showTech = true }, modifier = Modifier.fillMaxWidth()) {
+                        FilledTonalButton(onClick = { showTech = true }, modifier = Modifier.fillMaxWidth()) {
                             Text("Technické info / Poslať popis zariadenia")
                         }
                         if (lightish) {
-                            OutlinedButton(onClick = { showRoles = true }, modifier = Modifier.fillMaxWidth()) {
+                            FilledTonalButton(onClick = { showRoles = true }, modifier = Modifier.fillMaxWidth()) {
                                 Text(if (roles.isEmpty()) "Kanály svetla (ručne)" else "Kanály svetla (ručne – nastavené)")
                             }
                         }
@@ -605,24 +711,22 @@ internal fun DeviceDialog(
                             supportingText = { Text("Tajný kľúč na šifrované ovládanie cez WiFi. Mení sa len po novom spárovaní v Tuya appke.") },
                         )
                         Text("Verzia protokolu", style = MaterialTheme.typography.labelMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ChipRow {
                             listOf("3.3", "3.4", "3.5").forEach { v ->
-                                FilterChip(selected = version == v, onClick = { version = v }, label = { Text(v) })
+                                DomovChip(label = v, selected = version == v, onClick = { version = v })
                             }
                         }
-                        Text("Spôsob šifrovania, ktorý zariadenie používa. Ak zariadenie neodpovedá, skús inú verziu.",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        InfoHint("Spôsob šifrovania, ktorý zariadenie používa. Ak zariadenie neodpovedá, skús inú verziu.")
                     }
 
                     // hlavný vypínač: výber z hodnôt s ľudskými názvami
                     Text("Hlavný vypínač", style = MaterialTheme.typography.labelMedium)
-                    Text("Ktorá hodnota zapína a vypína zariadenie (prepínač na dlaždici). Automaticky to väčšinou sedí.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    InfoHint("Ktorá hodnota zapína a vypína zariadenie (prepínač na dlaždici). Automaticky to väčšinou sedí.")
                     if (boolDps.isNotEmpty()) {
-                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = powerDp.isBlank(), onClick = { powerDp = "" }, label = { Text("Automaticky") })
+                        ChipRow {
+                            DomovChip(label = "Automaticky", selected = powerDp.isBlank(), onClick = { powerDp = "" })
                             (boolDps + listOfNotNull(powerDp.takeIf { it.isNotBlank() && it !in boolDps })).forEach { dp ->
-                                FilterChip(selected = powerDp == dp, onClick = { powerDp = dp }, label = { Text("${dpName(dp)} ($dp)") })
+                                DomovChip(label = "${dpName(dp)} ($dp)", selected = powerDp == dp, onClick = { powerDp = dp })
                             }
                         }
                     } else {
@@ -650,15 +754,14 @@ internal fun DeviceDialog(
                         },
                     )
                     Text("Skryté hodnoty", style = MaterialTheme.typography.labelMedium)
-                    Text("Čo sa nemá zobrazovať na obrazovke zariadenia (napr. nepotrebné časovače).",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    InfoHint("Čo sa nemá zobrazovať na obrazovke zariadenia (napr. nepotrebné časovače).")
                     if (dpIds.isNotEmpty()) {
-                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ChipRow {
                             (dpIds + hidden.filter { it !in dpIds }).forEach { dp ->
-                                FilterChip(
+                                DomovChip(
+                                    label = "${dpName(dp)} ($dp)",
                                     selected = dp in hidden,
                                     onClick = { hidden = if (dp in hidden) hidden - dp else hidden + dp },
-                                    label = { Text("${dpName(dp)} ($dp)") },
                                 )
                             }
                         }
@@ -989,7 +1092,7 @@ private fun FoundCard(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    OutlinedButton(onClick = onApply) {
+                    FilledTonalButton(onClick = onApply) {
                         Text(if (versionDiffers) "Použiť verziu ${found.version}" else "Aktualizovať IP")
                     }
                 }

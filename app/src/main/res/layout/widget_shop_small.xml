@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/shop_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/shop_widget_bg"
+    android:orientation="vertical"
+    android:padding="14dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:id="@+id/shop_header"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginEnd="6dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_shop_cart" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Nákup"
+                android:textColor="@color/shop_widget_text"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-medium"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <FrameLayout
+            android:id="@+id/shop_add"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:background="@drawable/shop_widget_add_bg"
+            android:contentDescription="Pridať do nákupu">
+
+            <ImageView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="6dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_shop_add" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/shop_mine_col"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="vertical"
+        android:contentDescription="Môj zoznam">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Môj"
+            android:textColor="@color/shop_widget_muted"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium" />
+
+        <TextView
+            android:id="@+id/shop_mine_count"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="0"
+            android:textColor="@color/shop_widget_text"
+            android:textSize="26sp"
+            android:fontFamily="sans-serif-medium"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/shop_shared_col"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="vertical"
+        android:contentDescription="Spoločný zoznam">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Spoločný"
+            android:textColor="@color/shop_widget_muted"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium" />
+
+        <TextView
+            android:id="@+id/shop_shared_count"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="0"
+            android:textColor="@color/shop_widget_text"
+            android:textSize="26sp"
+            android:fontFamily="sans-serif-medium"
+            android:textStyle="bold" />
+    </LinearLayout>
+</LinearLayout>

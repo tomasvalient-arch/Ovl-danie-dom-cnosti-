@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,6 +39,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -64,28 +67,8 @@ private fun pasteText(context: Context): String {
 
 /** Obrazovka s horným panelom a šípkou späť (pre nastavenia, návod a pomoc). */
 @Composable
-internal fun PageScaffold(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(title) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Sym.arrowBack, contentDescription = "Späť")
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) { content() }
-    }
+internal fun PageScaffold(title: String, onBack: () -> Unit, subtitle: String? = null, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    SettingsSubPage(title, onBack, subtitle, content)
 }
 
 // ------------------------------------------------------------ nastavenia Tuya cloudu
@@ -104,55 +87,48 @@ fun CloudSettingsScreen(vm: HomeViewModel, onBack: () -> Unit, onGuide: () -> Un
 
     DisposableEffect(Unit) { onDispose { vm.clearCloudTest() } }
 
-    PageScaffold("Tuya cloud", onBack) {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = "Nepovinné. Tuya cloud appka použije len pri pridávaní a synchronizácii zariadení: stiahne " +
-                    "local keys, názvy a popis hodnôt. Zariadenia sa ďalej ovládajú len lokálne cez WiFi. Ručné pridanie " +
-                    "(tlačidlo +) a import devices.json fungujú aj bez cloudu.",
-                modifier = Modifier.padding(16.dp),
-                style = MaterialTheme.typography.bodyMedium,
+    SettingsSubPage("Tuya cloud", onBack, subtitle = "Nepovinné · vypínanie aj mimo domu") {
+        InfoHint("Cloud slúži na pridávanie a synchronizáciu zariadení (local keys, názvy, popis hodnôt). Ovládanie ide ďalej len cez domácu WiFi. Ručné pridanie a import devices.json fungujú aj bez cloudu.")
+        SettingRow(Sym.help, "Ako získať Access ID a Secret", caption = "Návod na iot.tuya.com", onClick = onGuide)
+
+        SectionLabel("Údaje projektu")
+        DomovCard(padding = 14.dp, spacing = 10.dp) {
+            DomovTextField(
+                value = accessId,
+                onValueChange = { accessId = it; vm.clearCloudTest() },
+                label = { Text("Access ID (Client ID)") },
+                singleLine = true,
+                trailingIcon = { TextButton(onClick = { accessId = pasteText(context); vm.clearCloudTest() }) { Text("Vložiť") } },
+                modifier = Modifier.fillMaxWidth(),
             )
-        }
-        OutlinedButton(onClick = onGuide, modifier = Modifier.fillMaxWidth()) { Text("Ako získať Access ID a Secret") }
-
-        OutlinedTextField(
-            value = accessId,
-            onValueChange = { accessId = it; vm.clearCloudTest() },
-            label = { Text("Access ID (Client ID)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        TextButton(onClick = { accessId = pasteText(context); vm.clearCloudTest() }) { Text("Vložiť Access ID zo schránky") }
-        OutlinedTextField(
-            value = secret,
-            onValueChange = { secret = it; vm.clearCloudTest() },
-            label = { Text("Access Secret (Client Secret)") },
-            singleLine = true,
-            visualTransformation = if (showSecret) VisualTransformation.None else PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DomovTextField(
+                value = secret,
+                onValueChange = { secret = it; vm.clearCloudTest() },
+                label = { Text("Access Secret") },
+                singleLine = true,
+                visualTransformation = if (showSecret) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = { TextButton(onClick = { showSecret = !showSecret }) { Text(if (showSecret) "Skryť" else "Zobraziť") } },
+                modifier = Modifier.fillMaxWidth(),
+            )
             TextButton(onClick = { secret = pasteText(context); vm.clearCloudTest() }) { Text("Vložiť Secret zo schránky") }
-            TextButton(onClick = { showSecret = !showSecret }) { Text(if (showSecret) "Skryť" else "Zobraziť") }
         }
 
-        Text("Dátové centrum", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Musí byť rovnaké ako pri Cloud projekte a ako región účtu v Tuya / Smart Life appke. Na Slovensku a v Česku je to väčšinou Stredná Európa.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DataCenter.entries.forEach { d ->
-                FilterChip(selected = dc == d, onClick = { dc = d; vm.clearCloudTest() }, label = { Text(d.title) })
+        SectionLabel("Dátové centrum")
+        DomovCard(padding = 14.dp, spacing = 10.dp) {
+            ChipRow {
+                DataCenter.entries.forEach { d ->
+                    DomovChip(label = d.title, selected = dc == d, onClick = { dc = d; vm.clearCloudTest() })
+                }
             }
+            InfoHint("Musí byť rovnaké ako pri Cloud projekte a ako región účtu v Tuya / Smart Life. Na Slovensku a v Česku je to väčšinou Stredná Európa.")
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { vm.testCloud(current) }, enabled = current.isComplete && test !is HomeViewModel.CloudTest.Running) {
-                Text("Otestovať pripojenie")
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            FilledTonalButton(
+                onClick = { vm.testCloud(current) },
+                enabled = current.isComplete && test !is HomeViewModel.CloudTest.Running,
+                modifier = Modifier.weight(1f),
+            ) { Text("Otestovať") }
             Button(
                 onClick = {
                     vm.saveCloud(current)
@@ -160,27 +136,16 @@ fun CloudSettingsScreen(vm: HomeViewModel, onBack: () -> Unit, onGuide: () -> Un
                     onBack()
                 },
                 enabled = current.isComplete,
+                modifier = Modifier.weight(1f),
             ) { Text("Uložiť") }
         }
         when (val t = test) {
             is HomeViewModel.CloudTest.Running -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            is HomeViewModel.CloudTest.Done -> Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (t.ok) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
-                ),
-            ) {
-                Text(t.message, modifier = Modifier.padding(16.dp))
-            }
+            is HomeViewModel.CloudTest.Done -> NoticeCard(t.message, if (t.ok) NoticeKind.Good else NoticeKind.Warning)
             else -> {}
         }
 
-        Text(
-            "Údaje sú v telefóne zašifrované kľúčom v Android Keystore. Nie sú súčasťou exportu zariadení a appka ich " +
-                "posiela len na server Tuya vo vybranom dátovom centre.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        InfoHint("Údaje sú v telefóne zašifrované v Android Keystore. Nie sú v exporte zariadení a appka ich posiela len na server Tuya vo vybranom dátovom centre.")
         if (saved != null) {
             TextButton(onClick = { confirmClear = true }) { Text("Odstrániť údaje z telefónu") }
         }
@@ -210,12 +175,10 @@ fun CloudSettingsScreen(vm: HomeViewModel, onBack: () -> Unit, onGuide: () -> Un
 
 @Composable
 private fun Step(number: Int, title: String, text: String, buttons: @Composable () -> Unit = {}) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("$number. $title", style = MaterialTheme.typography.titleMedium)
-            Text(text, style = MaterialTheme.typography.bodyMedium)
-            buttons()
-        }
+    DomovCard(padding = 14.dp, spacing = 8.dp) {
+        Text("$number. $title", style = MaterialTheme.typography.titleMedium)
+        Text(text, style = MaterialTheme.typography.bodyMedium)
+        buttons()
     }
 }
 
@@ -233,13 +196,13 @@ fun CloudGuideScreen(onBack: () -> Unit, onEnterKeys: () -> Unit) {
             1, "Registrácia",
             "Otvor iot.tuya.com a zaregistruj sa (zadarmo). Pri type účtu vyber súkromnú osobu / Individual developer. " +
                 "Môžeš použiť iný e-mail ako v Tuya appke.",
-        ) { OutlinedButton(onClick = { openUrl(context, URL_IOT) }) { Text("Otvoriť iot.tuya.com") } }
+        ) { FilledTonalButton(onClick = { openUrl(context, URL_IOT) }) { Text("Otvoriť iot.tuya.com") } }
         Step(
             2, "Cloud projekt",
             "Vľavo vyber Cloud → Development → Create Cloud Project. Názov ľubovoľný (napr. Domov), Industry: Smart Home, " +
                 "Development Method: Smart Home. Data Center vyber podľa regiónu účtu v Tuya / Smart Life appke – na " +
                 "Slovensku a v Česku Central Europe. Rovnaké dátové centrum potom zvolíš aj v appke.",
-        ) { OutlinedButton(onClick = { openUrl(context, URL_CLOUD) }) { Text("Otvoriť Cloud projekty") } }
+        ) { FilledTonalButton(onClick = { openUrl(context, URL_CLOUD) }) { Text("Otvoriť Cloud projekty") } }
         Step(
             3, "Služby IoT Core a Authorization",
             "Pri vytváraní projektu (alebo neskôr v projekte na záložke Service API → Go to Authorize) pridaj služby " +
@@ -274,7 +237,7 @@ fun CloudGuideScreen(onBack: () -> Unit, onEnterKeys: () -> Unit) {
                     "Keď služba vyprší, appka ovláda zariadenia ďalej normálne (lokálne). Nefunguje len sťahovanie z cloudu.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                OutlinedButton(onClick = { openUrl(context, URL_SERVICES) }) { Text("Otvoriť Cloud Services") }
+                FilledTonalButton(onClick = { openUrl(context, URL_SERVICES) }) { Text("Otvoriť Cloud Services") }
             }
         }
     }
@@ -284,15 +247,19 @@ fun CloudGuideScreen(onBack: () -> Unit, onEnterKeys: () -> Unit) {
 
 @Composable
 private fun HelpSection(title: String, text: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Text(text, style = MaterialTheme.typography.bodyMedium)
+    var open by remember { mutableStateOf(false) }
+    DomovCard(onClick = { open = !open }, padding = 14.dp, spacing = 8.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Icon(Sym.info, contentDescription = if (open) "Menej" else "Viac", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(20.dp))
+        }
+        if (open) Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
-fun HelpScreen(onBack: () -> Unit, onGuide: () -> Unit) {
-    PageScaffold("Pomoc", onBack) {
+fun HelpScreen(onBack: () -> Unit) {
+    SettingsSubPage("Pomoc", onBack, subtitle = "Ako appka funguje a časté otázky") {
         HelpSection(
             "Ako appka funguje",
             "Domov ovláda Tuya zariadenia priamo cez domácu WiFi, bez Tuya appky a bez cloudu. Na každé zariadenie potrebuje " +
@@ -300,13 +267,13 @@ fun HelpScreen(onBack: () -> Unit, onGuide: () -> Unit) {
         )
         HelpSection(
             "Pridanie zariadení",
-            "• Pridať (alebo Nastavenia → Hľadať zariadenia v sieti): appka nájde IP adresu, Device ID a verziu. Ak máš nastavený Tuya cloud, " +
-                "ťuknutím na Pridať dotiahne aj local key, názov a popis hodnôt.\n" +
+            "• + pri skupine Svetlá na Domove (alebo Nastavenia → Zariadenia → Hľadať v sieti): appka nájde IP adresu, Device ID a verziu. Ak máš nastavený Tuya cloud, " +
+                "ťuknutím na pridať dotiahne aj local key, názov a popis hodnôt.\n" +
                 "• Tlačidlo +: všetko zadáš ručne.\n" +
-                "• Nastavenia → Import zariadení: devices.json z tinytuya wizardu alebo záloha z tejto appky.\n" +
-                "• Nastavenia → Synchronizovať s Tuya cloudom: aktualizuje local keys a popisy a ponúkne zariadenia, ktoré v appke chýbajú.",
+                "• Nastavenia → Zariadenia → Import zariadení: devices.json z tinytuya wizardu alebo záloha z tejto appky.\n" +
+                "• Nastavenia → Zariadenia → Synchronizovať s Tuya cloudom: aktualizuje local keys a popisy a ponúkne zariadenia, ktoré v appke chýbajú.\n" +
+                "• Účet Tuya cloud a návod, ako získať prístup, sú v Nastavenia → Prepojenia a účty → Tuya cloud.",
         )
-        OutlinedButton(onClick = onGuide) { Text("Ako nastaviť Tuya cloud") }
         HelpSection(
             "Hodnoty a ich názvy",
             "V detaile zariadenia je zoznam hodnôt. Ak appka pozná popis z Tuya cloudu, hodnoty majú slovenské názvy a " +
@@ -316,15 +283,16 @@ fun HelpScreen(onBack: () -> Unit, onGuide: () -> Unit) {
         )
         HelpSection(
             "Hlavná obrazovka a scény",
-            "• Všetko vypnúť: po potvrdení vypne to isté, čo sa vypína pri odchode (predvolene svetlá a zásuvky, spotrebiče len " +
+            "• Varíme v hlavičke otvorí jedálniček (dnešné jedlá, týždeň a zásoby).\n" +
+                "• Vypínač v hlavičke (Všetko vypnúť): po potvrdení vypne to isté, čo sa vypína pri odchode (predvolene svetlá a zásuvky, spotrebiče len " +
                 "ak ich tam vyberieš). Mimo WiFi to skúsi cez Tuya cloud.\n" +
-                "• Príchod: hneď zapne zariadenia vybrané pre príchod.\n" +
-                "• Noc: vybrané svetlá nechá stlmené na teplú bielu, ostatné vypne. Nastavíš cez Noc → Upraviť.\n" +
+                "• Príchod a scéna Noc sú v Nastavenia → Automatika (Vyskúšať príchod / odchod a Scéna Noc).\n" +
+                "• Na karte Dnes + pridá udalosť; ťuknutie na Nákup otvorí zoznam.\n" +
                 "• Skupiny: podrž dlaždicu – posunieš ju v poradí alebo ju presunieš do vlastnej skupiny (napr. miestnosti).",
         )
         HelpSection(
             "Ovládanie PC",
-            "Nastavenia → Ovládanie PC. Na PC s Windowsom spusti program domov-pc.exe (z GitHubu, Releases), na jeho stránke klikni " +
+            "Karta Počítač v spodnej lište. Na PC s Windowsom spusti program domov-pc.exe (z GitHubu, Releases), na jeho stránke klikni " +
                 "„Spárovať nový telefón“ a v appke naskenuj QR kód. Potom uvidíš obraz PC a ovládaš ho: jeden prst = myš, ťuknutie = klik, " +
                 "dva prsty = rolovanie, štipnutie = priblíženie. Navrchu je panel s tlačidlami pre klávesnicu, klávesy (Ctrl, Alt, šípky…), " +
                 "schránku a vypnutie či uspanie PC. Funguje len doma na rovnakej WiFi. Zamknutú obrazovku Windowsu z telefónu ovládať nejde, " +
@@ -337,7 +305,7 @@ fun HelpScreen(onBack: () -> Unit, onGuide: () -> Unit) {
         )
         HelpSection(
             "Príchod a odchod",
-            "Karta Automatika → Príchod a odchod. Doma na WiFi ťukni na „Toto je moja domáca WiFi“, vyber, čo sa má pri príchode zapnúť a pri " +
+            "Nastavenia → Automatika. Doma na WiFi otvor Domáca WiFi a ťukni na „Toto je moja domáca WiFi“, vyber, čo sa má pri príchode zapnúť a pri " +
                 "odchode vypnúť, a zapni automatiku. Keď sa telefón pripojí na domácu WiFi (a predtým bol mimo domu), zapnú sa " +
                 "vybrané zariadenia – voliteľne len po zotmení. Keď sa odpojí a do nastaveného času (predvolene 3 min) sa " +
                 "nevráti, vybrané zariadenia sa vypnú cez Tuya cloud. Krátky výpadok WiFi nerobí nič.\n" +
@@ -353,17 +321,17 @@ fun HelpScreen(onBack: () -> Unit, onGuide: () -> Unit) {
                 "• Ak telefón doma vypína WiFi pri zamknutí obrazovky (niektoré úsporné režimy), automatika si bude myslieť, že si odišiel.",
         )
         HelpSection(
-            "Druhý telefón v domácnosti (napr. priateľka)",
+            "Ďalší telefón v domácnosti",
             "Aby odchod jedného nezhasol svetlá tomu, kto zostal doma:\n" +
                 "1. Na druhý telefón nainštaluj rovnaké Domov.apk.\n" +
-                "2. Na prvom telefóne: Nastavenia → Export zariadení → Zdieľať / Uložiť a pošli súbor na druhý telefón. Export obsahuje " +
-                "zariadenia aj kľúč domácnosti. (Ak už druhý telefón zariadenia má, stačí Príchod a odchod → Pozvať do domácnosti.)\n" +
-                "3. Na druhom telefóne: Nastavenia → Import zariadení → vyber súbor (alebo vlož pozvánku v Príchod a odchod → Pridať sa do domácnosti).\n" +
-                "4. Na oboch telefónoch nastav v Príchod a odchod Meno tohto telefónu (napr. Tomáš, Priateľka).\n" +
+                "2. Na prvom telefóne: Nastavenia → Záloha → Export zariadení → Zdieľať / Uložiť a pošli súbor na druhý telefón. Export obsahuje " +
+                "zariadenia aj kľúč domácnosti. (Ak už druhý telefón zariadenia má, stačí Nastavenia → Domácnosť a synchronizácia → Pozvánka textom.)\n" +
+                "3. Na druhom telefóne: Nastavenia → Zariadenia → Import zariadení → vyber súbor (alebo vlož pozvánku v Nastavenia → Domácnosť a synchronizácia).\n" +
+                "4. Na oboch telefónoch nastav v Domácnosť a synchronizácia meno tohto telefónu (napr. Tomáš, Jana).\n" +
                 "5. Na druhom telefóne doma na WiFi ťukni Toto je moja domáca WiFi, vyber zariadenia a zapni automatiku. Povoľ " +
                 "notifikácie a vypni optimalizáciu batérie. Automatika musí byť zapnutá na oboch telefónoch – inak sa telefón doma neozýva.\n" +
                 "6. Do minúty sa v časti Kto je doma objaví druhý telefón.\n" +
-                "Ak odídete obaja naraz, svetlá ostanú svietiť a príde notifikácia s tlačidlom Aj tak zhasnúť (potrebuje Tuya cloud).",
+                "Ak odíde naraz viac členov, svetlá ostanú svietiť a príde notifikácia s tlačidlom Aj tak zhasnúť (potrebuje Tuya cloud).",
         )
         HelpSection(
             "Verzia protokolu",
@@ -422,7 +390,7 @@ fun SyncDialog(vm: HomeViewModel, onDismiss: () -> Unit) {
                             }
                         }
                         if (sync.missing.size > 1) {
-                            OutlinedButton(onClick = { sync.missing.forEach { vm.addFromSync(it) } }) { Text("Pridať všetky") }
+                            FilledTonalButton(onClick = { sync.missing.forEach { vm.addFromSync(it) } }) { Text("Pridať všetky") }
                         }
                     } else {
                         Text("Všetky zariadenia z účtu už v appke sú.", style = MaterialTheme.typography.bodySmall)
@@ -440,7 +408,7 @@ fun SyncDialog(vm: HomeViewModel, onDismiss: () -> Unit) {
                             }
                         }
                         if (sync.zigbee.size > 1) {
-                            OutlinedButton(onClick = { zigbeeWarning = sync.zigbee.mapNotNull { vm.addZigbeeFromSync(it) }.firstOrNull() }) {
+                            FilledTonalButton(onClick = { zigbeeWarning = sync.zigbee.mapNotNull { vm.addZigbeeFromSync(it) }.firstOrNull() }) {
                                 Text("Pridať všetky Zigbee")
                             }
                         }

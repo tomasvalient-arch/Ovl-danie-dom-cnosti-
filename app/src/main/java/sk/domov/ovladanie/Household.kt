@@ -159,6 +159,6 @@ object HouseDecision {
         emptyList()
     }
 
-    /** „Doma je ešte Priateľka“ / „Doma sú ešte Jano, Priateľka“. */
+    /** „Doma je ešte Jana“ / „Doma sú ešte Jano, Jana“. */
     fun stayText(list: List<Member>): String = if (list.size == 1) "Doma je ešte ${list[0].name}" else "Doma sú ešte ${names(list)}"
 }

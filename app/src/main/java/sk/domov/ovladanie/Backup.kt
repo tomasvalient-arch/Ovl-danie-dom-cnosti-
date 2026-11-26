@@ -138,8 +138,9 @@ object BackupSpec {
         "domov_ui" to { _ -> true },
         "domov_weather" to { k -> k == "settings" }, // od 1.12 (len nastavenie, nie stiahnuté údaje)
         "domov_moon" to { k -> k == "visible" }, // od 1.26 (zobrazenie pásu fázy mesiaca)
-        "domov_shopping" to { k -> k == "items" }, // od 1.30 (nákupný zoznam)
+        "domov_shopping" to { k -> k == "items" || k == "history" }, // od 1.30 (nákupný zoznam), od 1.43 aj história návrhov
         "domov_events" to { k -> k == "events" || k == "time" }, // od 1.31 (udalosti a čas upozornení)
+        "domov_meals" to { k -> k == "recipes" || k == "plan" || k == "pantry" || k == "home" }, // od 1.60 (jedálniček)
     )
     val files: Set<String> get() = FILES.keys
     fun included(file: String, key: String): Boolean = FILES[file]?.invoke(key) == true
@@ -156,6 +157,10 @@ data class BackupPayload(
     val versionCode: Int = 0,
     val created: Long = 0L,
     val format: Int = FORMAT,
+    /** História chatu (od 1.65); staré zálohy pole nemajú. */
+    val chat: JSONArray? = null,
+    /** Prílohy chatu (id → base64), koľko sa zmestí do limitu zálohy. */
+    val chatFiles: JSONObject? = null,
 ) {
     val devices: JSONArray
         get() = (prefs[BackupSpec.DEVICES_FILE]?.get("devices") as? String)?.let { runCatching { JSONArray(it) }.getOrNull() } ?: JSONArray()
@@ -173,6 +178,8 @@ data class BackupPayload(
                 if (secretsIncluded) {
                     put("secrets", JSONObject().apply { cloud?.let { put("tuyaCloud", it) }; evohome?.let { put("evohome", it) } })
                 }
+                chat?.let { put("chat", it) }
+                chatFiles?.let { put("chatFiles", it) }
             }
     }
 
@@ -240,6 +247,8 @@ data class BackupPayload(
                     versionCode = o.optInt("versionCode"),
                     created = o.optLong("created"),
                     format = format,
+                    chat = o.optJSONArray("chat"),
+                    chatFiles = o.optJSONObject("chatFiles"),
                 )
             } catch (e: BackupException) {
                 throw e
@@ -272,6 +281,8 @@ data class BackupSummary(
     val evohome: Boolean,
     val appVersion: String,
     val created: Long,
+    val chatMessages: Int = 0,
+    val chatFiles: Int = 0,
 ) {
     fun lines(): List<String> = buildList {
         add("${devices} ${plural(devices, "zariadenie", "zariadenia", "zariadení")}, $groups ${plural(groups, "skupina", "skupiny", "skupín")}")
@@ -282,6 +293,11 @@ data class BackupSummary(
         add("Scéna Noc: " + if (nightSet) "nastavená" else "predvolená")
         if (household) add("Domácnosť: kľúč domácnosti" + if (members > 0) ", $members ${plural(members, "ďalší telefón", "ďalšie telefóny", "ďalších telefónov")}" else "")
         if (fryerSettings > 0) add("Upozornenia fritézy: $fryerSettings")
+        if (chatMessages > 0) add(
+            "Chat: $chatMessages ${plural(chatMessages, "správa", "správy", "správ")}" +
+                if (chatFiles > 0) ", $chatFiles ${plural(chatFiles, "príloha", "prílohy", "príloh")} (väčšie alebo prebytočné prílohy sa do zálohy nemusia zmestiť)"
+                else " (textová história; prílohy len ak sa zmestia do limitu zálohy 20 MB)",
+        )
         add(
             "Prihlasovacie údaje: " + listOfNotNull("Tuya cloud".takeIf { cloud }, "Honeywell".takeIf { evohome }).ifEmpty { listOf("nie sú v zálohe") }.joinToString(", "),
         )
@@ -307,6 +323,11 @@ interface PrefsSink {
     fun read(file: String): Map<String, Any>
     /** Prepíše zálohované kľúče súboru (ostatné nechá) – naraz a synchrónne. */
     fun write(file: String, values: Map<String, Any>)
+    /**
+     * Odstráni zálohované kľúče súboru. Ak súbor ešte nie je, nevytvorí ho.
+     * Ak po odstránení neostane žiadny kľúč, súbor zmaže (stav „súbor neexistoval“).
+     */
+    fun discard(file: String)
     fun readSecrets(): Pair<JSONObject?, JSONObject?>
     /** Nastaví prihlasovacie údaje; null = zmazať. */
     fun writeSecrets(cloud: JSONObject?, evohome: JSONObject?)
@@ -316,6 +337,12 @@ interface PrefsSink {
 interface Sealer {
     fun seal(data: ByteArray): ByteArray
     fun open(data: ByteArray): ByteArray
+}
+
+/** Voliteľné súčasti zálohy mimo SharedPreferences (chat od 1.65). Testy ju nemusia poskytovať. */
+interface BackupExtras {
+    fun snapshot(): Pair<JSONArray?, JSONObject?>
+    fun apply(chat: JSONArray?, files: JSONObject?, replace: Boolean)
 }
 
 object Backup {
@@ -359,6 +386,8 @@ object Backup {
             evohome = p.evohome != null,
             appVersion = p.appVersion,
             created = p.created,
+            chatMessages = p.chat?.length() ?: 0,
+            chatFiles = p.chatFiles?.length() ?: 0,
         )
     }
 
@@ -493,9 +522,11 @@ object Backup {
  * Obnovenie naraz: pred zápisom poistná záloha aktuálneho stavu (na „Vrátiť späť“) a denník s cieľovým stavom.
  * Ak by appka spadla uprostred zápisu, pri ďalšom spustení [recover] zápis dokončí – nikdy neostane polovičný stav.
  */
-class BackupApplier(private val dir: File, private val sink: PrefsSink, private val sealer: Sealer) {
+class BackupApplier(private val dir: File, private val sink: PrefsSink, private val sealer: Sealer, private val extras: BackupExtras? = null) {
     val safetyFile = File(dir, "pred-obnovou.bin")
     private val journal = File(dir, "obnova-prebieha.bin")
+    /** Súbory zo špecifikácie, ktoré treba pri dokončení / obnovení po páde zmazať (poistná snímka ich nemala). */
+    private val dropList = File(dir, "obnova-zmazat.txt")
 
     fun snapshot(includeSecrets: Boolean, appVersion: String = "", versionCode: Int = 0, now: Long = System.currentTimeMillis()): BackupPayload {
         val prefs = linkedMapOf<String, Map<String, Any>>()
@@ -504,7 +535,8 @@ class BackupApplier(private val dir: File, private val sink: PrefsSink, private 
             if (m.isNotEmpty()) prefs[file] = m
         }
         val (cloud, evo) = if (includeSecrets) sink.readSecrets() else null to null
-        return BackupPayload(prefs, includeSecrets, cloud, evo, appVersion, versionCode, now)
+        val (chat, chatFiles) = extras?.snapshot() ?: (null to null)
+        return BackupPayload(prefs, includeSecrets, cloud, evo, appVersion, versionCode, now, chat = chat, chatFiles = chatFiles)
     }
 
     fun hasSafety(): Boolean = safetyFile.exists()
@@ -515,25 +547,26 @@ class BackupApplier(private val dir: File, private val sink: PrefsSink, private 
      * Obnoví [backup]. REPLACE: zálohované súbory sa prepíšu (súbory, ktoré záloha nemá, ostanú); MERGE: zlúčenie,
      * [useBackup] rozhoduje konflikty. Pri chybe pred zápisom sa nezmení nič.
      */
-    fun restore(backup: BackupPayload, mode: RestoreMode, useBackup: Map<String, Boolean> = emptyMap(), makeSafety: Boolean = true) {
+    fun restore(backup: BackupPayload, mode: RestoreMode, useBackup: Map<String, Boolean> = emptyMap(), makeSafety: Boolean = true, dropMissing: Boolean = false) {
         Backup.validate(backup)
         val current = snapshot(includeSecrets = true)
         val target = if (mode == RestoreMode.MERGE) Backup.merge(current, backup, useBackup) else backup
         Backup.validate(target)
         dir.mkdirs()
         if (makeSafety) writeAtomic(safetyFile, sealer.seal(current.toBytes()))
+        val drop = if (dropMissing) BackupSpec.files.filter { it !in target.prefs } else emptyList()
+        if (drop.isEmpty()) dropList.delete() else writeAtomic(dropList, drop.joinToString("\n").toByteArray(Charsets.UTF_8))
         writeAtomic(journal, sealer.seal(target.toBytes()))
-        applyNow(target)
+        applyNow(target, drop, replace = mode == RestoreMode.REPLACE)
         journal.delete()
+        dropList.delete()
     }
 
-    /** Vráti stav spred poslednej obnovy. */
+    /** Vráti stav spred poslednej obnovy. Súbory, ktoré pred obnovou neexistovali, sa zmažú (nevytvárajú sa prázdne). */
     fun undo(): Boolean {
         if (!safetyFile.exists()) return false
         val p = BackupPayload.fromBytes(sealer.open(safetyFile.readBytes()))
-        // aby išlo vrátiť všetko: súbory, ktoré pred obnovou neexistovali, sa vyprázdnia
-        val full = p.copy(prefs = BackupSpec.files.associateWith { p.prefs[it].orEmpty() })
-        restore(full, RestoreMode.REPLACE, makeSafety = false)
+        restore(p, RestoreMode.REPLACE, makeSafety = false, dropMissing = true)
         safetyFile.delete()
         return true
     }
@@ -545,21 +578,31 @@ class BackupApplier(private val dir: File, private val sink: PrefsSink, private 
             BackupPayload.fromBytes(sealer.open(journal.readBytes()))
         } catch (e: Exception) {
             journal.delete() // denník sa zapisuje naraz (premenovaním) – nečitateľný znamená, že sa nič nezačalo
+            dropList.delete()
             return false
         }
-        applyNow(target)
+        val drop = readDropList()
+        applyNow(target, drop, replace = true)
         journal.delete()
+        dropList.delete()
         return true
     }
 
-    private fun applyNow(target: BackupPayload) {
+    private fun readDropList(): List<String> {
+        if (!dropList.exists()) return emptyList()
+        return dropList.readText(Charsets.UTF_8).lineSequence().map { it.trim() }.filter { it in BackupSpec.files }.toList()
+    }
+
+    private fun applyNow(target: BackupPayload, drop: Collection<String> = emptyList(), replace: Boolean = true) {
         for ((file, values) in target.prefs) if (file in BackupSpec.files) sink.write(file, values)
+        for (file in drop) if (file in BackupSpec.files && file !in target.prefs) sink.discard(file)
         if (target.secretsIncluded) {
             sink.writeSecrets(target.cloud, target.evohome)
         } else if (target.cloud != null || target.evohome != null) {
             val (c, e) = sink.readSecrets()
             sink.writeSecrets(target.cloud ?: c, target.evohome ?: e)
         }
+        extras?.apply(target.chat, target.chatFiles, replace)
     }
 
     companion object {

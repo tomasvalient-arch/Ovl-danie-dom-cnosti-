@@ -82,6 +82,12 @@ fun main() {
     val homeSsid = home.copy(ssid = "Doma")
     check("iné SSID ≠ domov", !homeSsid.matches(HomeNetwork("192.168.1.1", "192.168.1.0/24", ssid = "Kaviaren")))
     check("neznáme SSID (bez polohy) nevadí", homeSsid.matches(HomeNetwork("192.168.1.1", "192.168.1.0/24")))
+    // DHCP server (Android 11+): porovná sa len keď je známy na oboch stranách
+    val homeDhcp = HomeNetwork("192.168.1.1", "192.168.1.0/24", dhcpServer = "192.168.1.1")
+    check("rovnaký DHCP server = domov", homeDhcp.matches(HomeNetwork("192.168.1.1", "192.168.1.0/24", dhcpServer = "192.168.1.1")))
+    check("iný DHCP server ≠ domov", !homeDhcp.matches(HomeNetwork("192.168.1.1", "192.168.1.0/24", dhcpServer = "192.168.1.254")))
+    check("neznámy DHCP server (Android 10) nevadí", homeDhcp.matches(HomeNetwork("192.168.1.1", "192.168.1.0/24")))
+    check("starý odtlačok bez DHCP nevadí", home.matches(HomeNetwork("192.168.1.1", "192.168.1.0/24", dhcpServer = "192.168.1.1")))
     check("SSID bez úvodzoviek / <unknown ssid>", HomeNetwork.cleanSsid("\"Doma\"") == "Doma" && HomeNetwork.cleanSsid("<unknown ssid>") == "")
 
     // ---------------------------------------------------------------- nastavenia

@@ -56,6 +56,22 @@ fun main() {
     val d4 = Events.due(listOf(b), emptySet(), LocalDateTime.of(2026, 11, 25, 9, 0), t8)
     check("viac zmeškaných = jedno, najbližšie k udalosti", d4.size == 1 && d4[0].offset == 0 && d4[0].keys.size == 2)
     check("po udalosti nič, kým nie je ďalší rok", Events.due(listOf(b), emptySet(), LocalDateTime.of(2026, 11, 26, 9, 0), t8).isEmpty())
+
+    // časovaná udalosť so starým offsets=[0] nesmie dostať dennú pripomienku o 8:00
+    val timedOld = ev("tm", "Zubár", birthday = false, year = 2026, m = 11, d = 18, yearly = false, offs = listOf(0))
+        .copy(startMin = 14 * 60, remindMin = 60)
+    check("stará časovaná s offsetom 0 nedostane dennú pripomienku o 8:00",
+        Events.due(listOf(timedOld), emptySet(), LocalDateTime.of(2026, 11, 18, 8, 0), t8).isEmpty())
+    check("dayOffsets pri časovanej sú prázdne", Events.dayOffsets(timedOld).isEmpty())
+    check("normalize vyčistí offsety časovanej a celodennú nechá",
+        Events.normalize(timedOld).offsets.isEmpty() && Events.normalize(ev("a")).offsets == listOf(7, 0))
+    val loadedTimed = Events.fromJson("""[{"i":"tm","n":"Zubar","b":false,"y":2026,"m":11,"d":18,"r":false,"o":[0],"sm":840,"rm":60}]""")[0]
+    check("fromJson vyčistí offsety časovanej", loadedTimed.startMin == 840 && loadedTimed.offsets.isEmpty() && loadedTimed.remindMin == 60)
+    check("okno časovanej je deň výskytu, ostane v čoskoro",
+        Events.window(timedOld) == 0 && Events.groups(listOf(timedOld), today).soon.map { it.id } == listOf("tm"))
+    val dueTimedAt13 = Calendar.dueTimed(listOf(timedOld), LocalDateTime.of(2026, 11, 18, 13, 5), emptySet())
+    check("časovaná pripomienku o 13:00 stále má",
+        dueTimedAt13.size == 1 && dueTimedAt13[0].occurrence == today && dueTimedAt13[0].event.id == "tm")
     check("jednorazová, ktorá prešla, neupozorní", Events.due(listOf(past), emptySet(), LocalDateTime.of(2026, 11, 18, 9, 0), t8).isEmpty())
 
     // po uložení
@@ -91,7 +107,7 @@ fun main() {
     check("text upozornení", Events.offsetsText(listOf(7, 0)) == "Upozorní: 1 týždeň vopred, v ten deň")
     check("text upozornení 2", Events.offsetsText(listOf(1, 3)) == "Upozorní: 3 dni vopred, 1 deň vopred")
     check("bez upozornenia", Events.offsetsText(emptyList()) == "Bez upozornenia")
-    check("nadpis narodenín", Events.title(b) == "Narodeniny: Priateľka")
+    check("nadpis narodenín", Events.title(b) == "Priateľka · Narodeniny")
     check("upozornenie týždeň vopred", Events.notificationBody(b, LocalDate.of(2026, 11, 25), today) == "O týždeň · streda 25. novembra · bude mať 30 rokov")
     check("upozornenie v ten deň", Events.notificationBody(b, LocalDate.of(2026, 11, 25), LocalDate.of(2026, 11, 25)) == "Dnes · streda 25. novembra · má 30 rokov")
     check("upozornenie bez veku", Events.notificationBody(once, LocalDate.of(2026, 12, 24), today) == "O 36 dní · štvrtok 24. decembra")
@@ -123,7 +139,7 @@ fun main() {
     // okno upozornení: na Domove sa ukáže len to, čo sa blíži (najväčšia voľba vopred), nič sa nezbalí
     val far = ev("far", name = "Lucia", m = 3, d = 14)                       // o 116 dní, okno 7 dní
     val soonB = ev("b1", name = "Marek", m = 11, d = 22, offs = listOf(7, 1, 0)) // o 4 dni
-    val todayOnce = once.copy(id = "t", name = "Zubár", month = 11, day = 18, offs = listOf(1, 0))
+    val todayOnce = once.copy(id = "t", name = "Zubár", month = 11, day = 18, offsets = listOf(1, 0))
     val noOffs = ev("n", name = "Bez", m = 11, d = 20, offs = emptyList())
     check("okno = najväčšia voľba vopred", Events.window(b) == 7 && Events.window(noOffs) == null && Events.window(once) == 7)
     val g = Events.groups(listOf(far, b, soonB, todayOnce, noOffs, past), today)
@@ -145,7 +161,7 @@ fun main() {
     check("osoba s meninami má dva dátumy", Events.hasMeniny(km) && Events.parts(km).size == 2 && Events.parts(b).size == 1)
     val km2 = Events.parts(km)[1]
     check("odvodené meniny: id, názov, každoročné, bez veku", km2.id == "k~n" && km2.isMeniny && km2.yearly && km2.year == 0 && km2.month == 11 && km2.day == 25 &&
-        Events.title(km2) == "Meniny: Katka" && Events.age(km2, LocalDate.of(2026, 11, 25)) == null && Events.partLabel(km2) == "Meniny")
+        Events.title(km2) == "Katka · Meniny" && Events.age(km2, LocalDate.of(2026, 11, 25)) == null && Events.partLabel(km2) == "Meniny")
     check("id odvodenej položky sa vráti na uložený záznam", Events.baseId(km2.id) == "k" && Events.baseId("k") == "k")
     check("meniny len pri narodeninách", !Events.hasMeniny(km.copy(birthday = false)) && Events.parts(km.copy(birthday = false)).size == 1)
     check("meniny s neplatným dátumom sa ignorujú", !Events.hasMeniny(km.copy(meninyMonth = 13)) && !Events.hasMeniny(km.copy(meninyDay = 0)))
@@ -211,5 +227,41 @@ fun main() {
     check("poškodený JSON = žiadne udalosti", Events.fromJson("{zle").isEmpty() && Events.fromJson(null).isEmpty() && Events.fromJson("").isEmpty())
     val fr = setOf("e1|7|2026-11-25", "e2|0|2026-12-01")
     check("záznamy o odoslaných tam a späť", Events.firedFromJson(Events.firedToJson(fr)) == fr && Events.firedFromJson("zle").isEmpty())
+
+    // dátumy výskytu a skladanie nadpisu (jeden zdroj pravdy – 1.49)
+    val shot = LocalDate.of(2026, 11, 25)
+    val person = ev("kat", name = "Katkarinka narodeniny", m = 11, d = 26, offs = listOf(7, 1, 0)).copy(meninyMonth = 11, meninyDay = 20)
+    val parts = Events.parts(person)
+    check("osoba má narodeniny aj meniny ako dve časti", parts.size == 2 && parts[0].birthday && parts[1].isMeniny)
+    check("meniny pripadajú na 20. 11., nie na zajtra", Events.happensOn(parts[1], LocalDate.of(2026, 11, 20)) && !Events.happensOn(parts[1], LocalDate.of(2026, 11, 26)))
+    check("narodeniny pripadajú na 26. 11.", Events.happensOn(parts[0], LocalDate.of(2026, 11, 26)) && !Events.happensOn(parts[0], LocalDate.of(2026, 11, 20)))
+    check("z 25. 11. sú narodeniny zajtra, meniny až budúci rok",
+        Events.occurrence(parts[0], shot) == LocalDate.of(2026, 11, 26) && Events.daysUntil(parts[0], shot) == 1 &&
+            Events.occurrence(parts[1], shot) == LocalDate.of(2027, 11, 20))
+    check("Calendar.happensOn sa zhoduje s Events.happensOn",
+        Calendar.happensOn(parts[1], LocalDate.of(2026, 11, 20)) && Calendar.happensOn(parts[0], LocalDate.of(2026, 11, 26)))
+    check("occurrence a happensOn sedia: výskyt je ten deň",
+        parts.all { e -> Events.occurrence(e, shot)?.let { Events.happensOn(e, it) } == true })
+    check("zloženie nadpisu odstráni typ z mena a dá ho nabok",
+        Events.displayName(person) == "Katkarinka" &&
+            Events.title(parts[0]) == "Katkarinka · Narodeniny" &&
+            Events.title(parts[1]) == "Katkarinka · Meniny")
+    check("predpona Meniny: sa nezdvojuje",
+        Events.title(km2.copy(name = "Meniny: Katka")) == "Katka · Meniny" &&
+            Events.displayName(ev("x", name = "Katka – meniny")) == "Katka")
+    check("obyčajná udalosť ostane bez typu", Events.title(once.copy(name = "Zubár")) == "Zubár")
+    check("popisky Dnes / Zajtra / dátum",
+        Events.whenLabel(0) == "Dnes" && Events.whenLabel(1) == "Zajtra" &&
+            Events.whenLabel(5, LocalDate.of(2026, 11, 30)) == "pondelok 30. novembra")
+    val head = Events.headerSubtitle(listOf(person), shot)
+    check("podnadpis kalendára: dnes nič, ďalšia zajtra narodeniny",
+        head.startsWith("Dnes nič") && head.contains("Zajtra") && head.contains("Katkarinka") && head.contains("Narodeniny") && !head.contains("Meniny: Katkarinka narodeniny"))
+    check("každoročná udalosť po termíne skočí na budúci rok",
+        Events.occurrence(ev("x", m = 11, d = 20), shot) == LocalDate.of(2027, 11, 20))
+    check("jednorazová po termíne nemá výskyt",
+        Events.occurrence(once.copy(year = 2026, month = 11, day = 20, yearly = false), shot) == null)
+    check("skupiny z 25. 11.: narodeniny čoskoro, meniny neskôr (nie zajtra)",
+        Events.groups(listOf(person), shot).let { it.soon.map { e -> e.id } == listOf("kat") && it.later.map { e -> e.id } == listOf("kat~n") })
+
     println("Všetko v poriadku")
 }

@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -112,15 +113,22 @@ private fun EventSoonLine(e: EventItem, today: LocalDate) {
 }
 
 /**
- * „Udalosti“ na Domove. Kým sa nič nechystá, je to tenký riadok; inak karta, v ktorej je pod sebou každá udalosť
- * a meniny, ktorých okno upozornení už začalo (napr. týždeň vopred) – všetky, bez zbaľovania. Po dni udalosti riadok zmizne.
+ * Karta „Dnes“ na Domove: dnešné meniny z kalendára, zajtrajšie meniny ako malý riadok
+ * a dnešné / blížiace sa udalosti domácnosti s popiskom Dnes / Zajtra / dátum.
  */
 @Composable
-internal fun EventsRow(events: List<EventItem>, onClick: () -> Unit) {
+internal fun TodayRow(events: List<EventItem>, onClick: () -> Unit, tick: Int = 0, onAdd: (() -> Unit)? = null) {
     val scheme = MaterialTheme.colorScheme
-    val today = LocalDate.now()
+    var today by remember { mutableStateOf(LocalDate.now()) }
+    LaunchedEffect(tick) { today = LocalDate.now() }
     val soon = Events.groups(events, today).soon
-    val slim = soon.isEmpty()
+    val todayNames = Meniny.zoznam(today)
+    val tomorrow = today.plusDays(1)
+    val tomorrowNames = Meniny.zoznam(tomorrow)
+    val shownMeniny = Events.expand(events).filter { it.isMeniny && Events.happensOn(it, today) }
+        .map { Events.displayName(it).lowercase() }.toSet()
+    val genericToday = todayNames.filter { it.lowercase() !in shownMeniny }
+    val slim = soon.isEmpty() && genericToday.isEmpty() && tomorrowNames.isEmpty()
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -130,22 +138,55 @@ internal fun EventsRow(events: List<EventItem>, onClick: () -> Unit) {
     ) {
         Column {
             Row(
-                modifier = Modifier.fillMaxWidth().height(if (slim) 52.dp else 50.dp).padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().height(if (slim) 52.dp else 50.dp).padding(start = 16.dp, end = if (onAdd != null) 12.dp else 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Sym.calendarToday, contentDescription = null, tint = scheme.primary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(12.dp))
-                Text("Udalosti", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text("Dnes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(
-                    if (slim) Events.slimText(events) else "${soon.size} čoskoro",
+                    when {
+                        slim -> Events.slimText(events)
+                        soon.isEmpty() -> Meniny.text(today)
+                        else -> Events.headerSubtitle(events, today)
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.End,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                    modifier = Modifier.weight(1f).padding(start = 12.dp, end = if (onAdd != null) 4.dp else 0.dp),
                 )
+                if (onAdd != null) {
+                    Surface(
+                        onClick = onAdd,
+                        shape = RoundedCornerShape(16.dp),
+                        color = scheme.surfaceContainerHigh,
+                        border = BorderStroke(1.dp, scheme.surfaceVariant),
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(Sym.add, contentDescription = "Pridať udalosť", modifier = Modifier.padding(7.dp).size(18.dp))
+                    }
+                }
                 Icon(Sym.chevronRight, contentDescription = null, tint = scheme.outline, modifier = Modifier.padding(start = 4.dp).size(20.dp))
+            }
+            if (genericToday.isNotEmpty()) {
+                HorizontalDivider(color = scheme.surfaceVariant)
+                Text(
+                    "Meniny: ${genericToday.joinToString(", ")}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+            if (tomorrowNames.isNotEmpty()) {
+                if (genericToday.isEmpty()) HorizontalDivider(color = scheme.surfaceVariant)
+                Text(
+                    "Zajtra meniny: ${tomorrowNames.joinToString(", ")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp, top = if (genericToday.isEmpty()) 8.dp else 0.dp),
+                )
             }
             soon.forEach { e ->
                 HorizontalDivider(color = scheme.surfaceVariant)
@@ -155,12 +196,16 @@ internal fun EventsRow(events: List<EventItem>, onClick: () -> Unit) {
     }
 }
 
+/** @deprecated nahradené kartou [TodayRow] */
+@Composable
+internal fun EventsRow(events: List<EventItem>, onClick: () -> Unit) = TodayRow(events, onClick)
+
 /** Zoznam udalostí a narodenín (Čoskoro / Neskôr / Prešlo); ťuknutím na riadok sa upravia, + hore pridá novú. */
 @Composable
 internal fun EventsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
-    var events by remember { mutableStateOf(EventsStore.events(context)) }
+    var events by remember { mutableStateOf(EventsStore.visible(context)) }
     var timeMin by remember { mutableIntStateOf(EventsStore.time(context)) }
     var editing by remember { mutableStateOf<EventItem?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -171,7 +216,8 @@ internal fun EventsScreen(onBack: () -> Unit) {
     val groups = Events.groups(events, today)
 
     fun saved(e: EventItem) {
-        events = EventsStore.save(context, e)
+        EventsStore.save(context, e)
+        events = EventsStore.visible(context)
         adding = false
         editing = null
         // o povolenie upozornení sa appka pýta po uložení prvej udalosti
@@ -270,7 +316,8 @@ internal fun EventsScreen(onBack: () -> Unit) {
             initial = e,
             onSave = { saved(it) },
             onDelete = {
-                events = EventsStore.delete(context, e.id)
+                EventsStore.delete(context, e.id)
+                events = EventsStore.visible(context)
                 editing = null
             },
             onDismiss = { editing = null },

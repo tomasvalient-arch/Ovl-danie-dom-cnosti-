@@ -33,6 +33,9 @@ enum class DataCenter(val code: String, val title: String, val host: String) {
 
 /** Prístupové údaje k Cloud projektu na iot.tuya.com. */
 data class CloudConfig(val accessId: String, val accessSecret: String, val dataCenter: DataCenter = DataCenter.EU) {
+    override fun toString(): String = "CloudConfig(accessId=$accessId, accessSecret=${masked(accessSecret)}, dataCenter=$dataCenter)"
+
+
     val isComplete: Boolean get() = accessId.isNotBlank() && accessSecret.isNotBlank()
 }
 
@@ -57,6 +60,9 @@ data class CloudDevice(
 ) {
     /** ID, ktorým sa podzariadenie oslovuje cez bránu (node_id, inak uuid). */
     val cid: String get() = nodeId.ifBlank { uuid }
+
+    override fun toString(): String =
+        "CloudDevice(id=$id, name=$name, localKey=${masked(localKey)}, category=$category, online=$online, sub=$sub, cid=$cid, parentId=$parentId)"
 }
 
 /** Chyba z Tuya cloudu s kódom (napr. 1004 = zlý podpis). */

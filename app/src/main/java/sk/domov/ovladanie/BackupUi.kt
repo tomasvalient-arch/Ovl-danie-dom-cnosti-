@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -164,24 +165,8 @@ fun BackupScreen(onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Záloha a obnovenie") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Sym.arrowBack, contentDescription = "Späť") } },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                "Jeden zašifrovaný súbor so všetkým: zariadenia (aj local keys, popis hodnôt, názvy, skryté hodnoty, zdroje svetla, skupiny a poradie), " +
-                    "scéna Noc, príchod a odchod, domácnosť a jej kľúč, upozornenia fritézy a nastavenia appky.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    SettingsSubPage("Záloha a obnovenie", onBack, subtitle = "Zašifrovaný súbor so všetkým") {
+            InfoHint("Jeden súbor obsahuje zariadenia (aj kľúče a popisy), scénu Noc, príchod a odchod, domácnosť, upozornenia fritézy a nastavenia appky.")
 
             SectionLabel("Vytvoriť zálohu")
             DomovCard {
@@ -194,11 +179,7 @@ fun BackupScreen(onBack: () -> Unit) {
                 )
                 CheckRow("Pridať aj prihlasovacie údaje Tuya cloud a Honeywell", checked = withSecrets, titleStyle = MaterialTheme.typography.bodyMedium) { withSecrets = it }
                 if (withSecrets) {
-                    Text(
-                        "Pozor: kto pozná heslo zálohy, dostane aj prístup k tvojmu Tuya cloudu a kúreniu Honeywell. Zvoľ silné heslo a súbor nikomu neposielaj.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                    NoticeCard("Kto pozná heslo zálohy, dostane aj prístup k Tuya cloudu a kúreniu Honeywell. Zvoľ silné heslo a súbor nikomu neposielaj.", NoticeKind.Warning)
                 }
                 pwError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 Button(
@@ -209,7 +190,7 @@ fun BackupScreen(onBack: () -> Unit) {
                     enabled = busy == null,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Uložiť do súboru") }
-                OutlinedButton(
+                FilledTonalButton(
                     onClick = {
                         pwError = passwordProblem(pw1, pw2)
                         if (pwError == null) work("Šifrujem zálohu…") {
@@ -232,7 +213,7 @@ fun BackupScreen(onBack: () -> Unit) {
                 Button(onClick = { openFile.launch(arrayOf("*/*")) }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) { Text("Vybrať súbor zálohy") }
                 if (hasSafety) {
                     Text("Stav pred posledným obnovením: ${dateText(safetyAt)}", style = MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick = { confirmUndo = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) { Text("Vrátiť späť") }
+                    FilledTonalButton(onClick = { confirmUndo = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) { Text("Vrátiť späť") }
                 }
             }
 
@@ -258,7 +239,7 @@ fun BackupScreen(onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                     if (auto.error.isNotBlank()) Text(auto.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    OutlinedButton(onClick = {
+                    FilledTonalButton(onClick = {
                         work("Zálohujem…") {
                             val err = withContext(Dispatchers.IO) { BackupManager.runAuto(context) }
                             auto = BackupManager.auto(context)
@@ -267,12 +248,7 @@ fun BackupScreen(onBack: () -> Unit) {
                     }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) { Text("Zálohovať teraz") }
                 }
             }
-            Text(
-                "Import a export zariadení (.json) ostávajú v menu ako doteraz.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+            InfoHint("Import a export zariadení (.json) ostávajú v Nastavenia › Zariadenia.")
     }
 
     busy?.let { label ->
@@ -427,7 +403,7 @@ fun BackupScreen(onBack: () -> Unit) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Raz týždenne uloží zálohu do vybraného priečinka (napr. Stiahnuté alebo Google Disk) a nechá posledné 4.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick = { pickFolder.launch(null) }, modifier = Modifier.fillMaxWidth()) {
+                    FilledTonalButton(onClick = { pickFolder.launch(null) }, modifier = Modifier.fillMaxWidth()) {
                         Text(autoFolder?.let { "Priečinok: " + folderName(it) } ?: "Vybrať priečinok")
                     }
                     PasswordField("Heslo zálohy", autoPw1) { autoPw1 = it; autoError = null }
@@ -481,7 +457,7 @@ private fun PasswordField(label: String, value: String, onChange: (String) -> Un
         )
         return
     }
-    OutlinedTextField(
+    DomovTextField(
         value = value,
         onValueChange = onChange,
         label = { Text(label) },
