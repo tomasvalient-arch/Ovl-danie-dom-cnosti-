@@ -159,7 +159,11 @@ object HouseSyncEngine {
 
             if (incoming.isNotEmpty()) {
                 try {
-                    applyIncoming(c, incoming)
+                    // veľké záznamy (recept s dlhým postupom) prichádzajú po častiach: zložia sa, až keď je kompletný celok
+                    val parts = try { JSONObject(p.getString("parts", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+                    val (partsNext, whole) = HouseSync.reassemble(parts, incoming, now)
+                    if (partsNext.toString() != parts.toString()) p.edit().putString("parts", partsNext.toString()).commit()
+                    if (whole.isNotEmpty()) applyIncoming(c, whole)
                 } catch (e: Exception) {
                     android.util.Log.w("Domov", "sync apply", e)
                     markError(c, "spracovanie správy: ${describeError(e)}")

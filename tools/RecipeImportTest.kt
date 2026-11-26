@@ -119,6 +119,46 @@ fun main() {
     check("2 strúčiky cesnaku v jednom riadku", RecipeImport.parseLine("2 strúčiky cesnaku")!!.let { it.name == "Cesnak" && eq(it.amount, 2.0) && it.unit == "strúčik" } && RecipeImport.parseLine("cesnak – 2 strúčiky")!!.let { it.name == "Cesnak" && eq(it.amount, 2.0) && it.unit == "strúčik" })
     check("zobrazenie: 2 strúčiky, ½ ČL, 1 hrsť", Meals.formatQty(2.0, "strúčik") == "2 strúčiky" && Meals.formatQty(0.5, "ČL") == "½ ČL" && Meals.formatQty(1.0, "hrsť") == "1 hrsť")
 
+    // ── postup prípravy ──────────────────────────────────────────────────────────────────────────────
+    val st1 = RecipeImport.parse("Rezne\nPorcie: 4\nSuroviny\n500 g mäsa\n2 vajcia\nPostup\n1. Mäso naklepeme a osolíme.\n2. Obalíme v múke, vajci\na strúhanke.\n3. Smažíme dozlatista.\nPoznámka\nPodávame s citrónom.")
+    check("postup: očíslované kroky, pokračovanie riadka sa spojí, poznámka sa neberie", st1.steps == listOf("Mäso naklepeme a osolíme.", "Obalíme v múke, vajci a strúhanke.", "Smažíme dozlatista.") && !st1.stepsCut)
+    check("postup: suroviny ostanú nedotknuté a nič nepribudne do nerozpoznaných", st1.ingredients.size == 2 && st1.skipped.isEmpty())
+    val st2 = RecipeImport.parse("Suroviny\n2 vajcia\nPostup\n1\nNaklepeme mäso.\n2\nObalíme.\nDobrú chuť!")
+    check("postup: číslo na samostatnom riadku je len oddeľovač, „Dobrú chuť“ preč", st2.steps == listOf("Naklepeme mäso.", "Obalíme."))
+    val st3 = RecipeImport.parse("Suroviny\n2 cibule\nPostup prípravy:\nCibuľu nakrájame na kocky.\nOrestujeme na oleji\ndo zlatista.\nPridáme papriku.")
+    check("postup: bez číslovania, riadok s malým písmenom pokračuje v kroku", st3.steps == listOf("Cibuľu nakrájame na kocky.", "Orestujeme na oleji do zlatista.", "Pridáme papriku."))
+    val st4 = RecipeImport.parse("Suroviny\n2 cibule\nPostup\n1. Zmiešame múku. 2. Pridáme vajcia. 3. Pečieme.")
+    check("postup: číslovaný odsek v jednom riadku sa rozdelí", st4.steps == listOf("Zmiešame múku.", "Pridáme vajcia.", "Pečieme."))
+    val longText = (1..12).joinToString(" ") { "Veta číslo $it sa týka varenia a trvá nejaký čas, takže ju treba dôkladne sledovať." }
+    val st5 = RecipeImport.parse("Suroviny\n2 cibule\nPostup\n$longText")
+    check("postup: jeden dlhý odsek sa rozdelí po vetách na kroky", st5.steps.size in 3..8 && st5.steps.all { it.length < 600 } && st5.steps.joinToString(" ") == longText)
+    val st6 = RecipeImport.parse("Suroviny\n2 cibule\nPríprava\n20 min\nVarenie\n40 min\nSuroviny\n3 vajcia")
+    check("postup: časy pod nadpisom Príprava nie sú kroky", st6.steps.isEmpty())
+    val st7 = RecipeImport.parse("Suroviny: 500 g múky, 3 vajcia. Postup: Zmiešame všetko. Potom pečieme.")
+    check("postup: za inline „Postup:“ ostane text ako krok a suroviny sa nepokazia", st7.steps.isNotEmpty() && st7.steps.first().startsWith("Zmiešame všetko") && st7.has("Múka", 500.0, "g") && st7.has("Vajcia", 3.0, "ks") && st7.ingredients.size == 2)
+    check("postup: recept bez postupu má prázdny zoznam", RecipeImport.parse("Suroviny\n500 g múky\n2 vajcia").steps.isEmpty())
+    val many = RecipeImport.parse("Suroviny\n2 cibule\nPostup\n" + (1..60).joinToString("\n") { "$it. Krok číslo $it sa vykoná dôkladne." })
+    check("postup: najviac 50 krokov a označí sa skrátenie", many.steps.size == 50 && many.stepsCut && many.steps.first() == "Krok číslo 1 sa vykoná dôkladne.")
+
+    // postup zo stránky: JSON-LD
+    val ldSteps = """<script type="application/ld+json">{"@type":"Recipe","name":"Rezne","recipeIngredient":["500 g mäsa","2 vajcia"],"recipeInstructions":[{"@type":"HowToStep","text":"Mäso naklepeme &amp; osolíme."},{"@type":"HowToStep","text":"Obalíme v múke.<br>Potom vo vajci."},{"@type":"HowToStep","name":"Smažíme dozlatista."}]}</script>"""
+    val w1 = RecipeImport.fromHtml(ldSteps)!!
+    check("stránka: kroky z HowToStep (entity, <br> v kroku sa spojí)", w1.steps == listOf("Mäso naklepeme & osolíme.", "Obalíme v múke. Potom vo vajci.", "Smažíme dozlatista."))
+    val ldSect = """<script type="application/ld+json">{"@type":"Recipe","name":"Koláč","recipeIngredient":["250 g múky","100 g masla"],"recipeInstructions":[{"@type":"HowToSection","name":"Cesto","itemListElement":[{"@type":"HowToStep","text":"Vymiesime cesto."},{"@type":"HowToStep","text":"Necháme odpočinúť."}]},{"@type":"HowToSection","name":"Plnka","itemListElement":[{"@type":"HowToStep","text":"Zmiešame tvaroh."}]}]}</script>"""
+    val w2 = RecipeImport.fromHtml(ldSect)!!
+    check("stránka: HowToSection – názov sekcie sa pridá k prvému kroku", w2.steps == listOf("Cesto: Vymiesime cesto.", "Necháme odpočinúť.", "Plnka: Zmiešame tvaroh."))
+    val ldText = """<script type="application/ld+json">{"@type":"Recipe","name":"Gulas","recipeIngredient":["500 g mäsa","2 cibule"],"recipeInstructions":"1. Cibuľu orestujeme.<br/>2. Pridáme mäso.<br/>3. Dusíme hodinu."}</script>"""
+    val w3 = RecipeImport.fromHtml(ldText)!!
+    check("stránka: postup ako jeden text s <br> a číslovaním", w3.steps == listOf("Cibuľu orestujeme.", "Pridáme mäso.", "Dusíme hodinu."))
+    val ldStrings = """<script type="application/ld+json">{"@type":"Recipe","name":"Gulas","recipeIngredient":["500 g mäsa","2 cibule"],"recipeInstructions":["Cibuľu orestujeme","pridáme mäso."]}</script>"""
+    val w4 = RecipeImport.fromHtml(ldStrings)!!
+    check("stránka: pole textov = každý prvok je krok (aj s malým písmenom)", w4.steps == listOf("Cibuľu orestujeme", "pridáme mäso."))
+    val ldNone = """<script type="application/ld+json">{"@type":"Recipe","name":"X","recipeIngredient":["500 g mäsa","2 cibule"]}</script>"""
+    check("stránka bez postupu: prázdny zoznam, suroviny ostanú", RecipeImport.fromHtml(ldNone)!!.let { it.steps.isEmpty() && it.ingredients.size == 2 })
+    val microSteps = """<html><h1>Palacinky</h1><ul><li itemprop="recipeIngredient">250 g múky</li><li itemprop="recipeIngredient">2 vajcia</li></ul><ol itemprop="recipeInstructions"><li>Zmiešame múku s vajcami.</li><li>Pridáme <b>mlieko</b>.</li></ol></html>"""
+    val w5 = RecipeImport.fromHtml(microSteps)!!
+    check("stránka bez JSON-LD: postup z itemprop=recipeInstructions", w5.steps == listOf("Zmiešame múku s vajcami.", "Pridáme mlieko."))
+
     // čo nesmie byť surovina
     val o = RecipeImport.parse("Rezne\nPečieme 20 minút pri 180 °C.\n45 min\n2 hodiny\nPorcie 4")
     check("kroky, čas a teplota nie sú suroviny", o.ingredients.isEmpty() && o.title == "Rezne")

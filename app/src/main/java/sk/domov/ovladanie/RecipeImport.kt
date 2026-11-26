@@ -23,6 +23,10 @@ object RecipeImport {
         val portions: Int,
         val ingredients: List<Meals.Ingredient>,
         val skipped: List<String> = emptyList(),
+        /** Postup prípravy: jeden krok = jeden prvok, bez číslovania. */
+        val steps: List<String> = emptyList(),
+        /** Postup bol taký dlhý, že sa časť vynechala. */
+        val stepsCut: Boolean = false,
     )
 
     private const val NUM = "(?:\\d+\\s+\\d+/\\d+|\\d+/\\d+|\\d+(?:[.,]\\d+)?)"
@@ -536,9 +540,11 @@ object RecipeImport {
             if (h != null) {
                 val idx = line.indexOfFirst { it == ':' || it == '：' }
                 var content = line.substring(idx + 1).trim()
-                INLINE_STOP.find(content)?.let { content = content.substring(0, it.range.first) }
+                var tail = ""
+                INLINE_STOP.find(content)?.let { tail = content.substring(it.range.last + 1).trim(); content = content.substring(0, it.range.first) }
                 out += "Suroviny"
                 out += content.split(Regex(";|,(?=\\s)|\\s[•·▪●◦■□☐✓✔]\\s*")).map { it.trim() }.filter { it.isNotEmpty() }
+                if (tail.isNotEmpty()) { out += "Postup"; out += tail }
                 continue
             }
             val bullets = Regex("\\s[•·▪●◦■□☐✓✔]\\s*")
@@ -606,7 +612,167 @@ object RecipeImport {
             }
             if ((inIngredients || out.isNotEmpty()) && line.length <= 90) skipped += line
         }
-        return Result(title, if (portions > 0) portions else 4, out, skipped.take(12))
+        val (steps, cut) = extractSteps(first)
+        return Result(title, if (portions > 0) portions else 4, out, skipped.take(12), steps, cut)
+    }
+
+    // ── postup prípravy ─────────────────────────────────────────────────────────────────────────────────
+
+    /** Nadpisy, od ktorých začína postup. */
+    private val STEP_HEADERS = setOf(
+        "postup", "priprava", "postup pripravy", "sposob pripravy", "instructions", "method", "directions", "preparation",
+        "postup varenia", "priprava jedla", "postup pripravy jedla",
+    )
+
+    /** Čo za postupom už k receptu nepatrí: poznámky, hodnoty, komentáre, odporúčania, rozlúčka. */
+    private val STEP_END = setOf(
+        "poznamka", "poznamky", "tip", "tipy", "tip na zaver", "nutricne hodnoty", "vyzivove hodnoty", "komentare", "pridat komentar",
+        "podobne recepty", "suvisiace recepty", "dalsie recepty", "odporucame", "tagy", "zdielat", "dobru chut", "recenzie", "hodnotenia",
+    )
+
+    private const val MAX_STEPS = 50
+    private const val MAX_STEPS_CHARS = 12_000
+    private const val MAX_STEP_CHARS = 1_200
+
+    private val JUST_NUMBER = Regex("^(?:krok\\s*)?\\d{1,2}\\s*[.):]?$", RegexOption.IGNORE_CASE)
+    private val PURE_META = Regex("^\\d+[\\d\\s.,:/-]*\\s*(?:min\\p{L}*|hod\\p{L}*|h|°\\s*c|kcal|porci\\p{L}*|osob\\p{L}*)\\.?$", RegexOption.IGNORE_CASE)
+    private val SENTENCE_END = Regex("(?<=[.!?…])\\s+(?=[\\p{Lu}\\d])")
+    private val INLINE_NUMBERED = Regex("\\s+(?=\\d{1,2}[.)]\\s+\\p{Lu})")
+
+    /** Postup z textu: riadky za nadpisom Postup/Príprava až po poznámky, komentáre alebo nový nadpis Suroviny. */
+    private fun extractSteps(lines: List<String>): Pair<List<String>, Boolean> {
+        val start = lines.indexOfFirst { fold(it).trimEnd(':', ' ') in STEP_HEADERS }
+        if (start < 0) return emptyList<String>() to false
+        val raw = ArrayList<String>()
+        for (i in start + 1 until lines.size) {
+            val f = fold(lines[i]).trimEnd(':', ' ', '!', '.')
+            if (f in STEP_END || f in HEADERS_IN) break
+            raw += lines[i]
+        }
+        return cleanSteps(raw, lineIsStep = false)
+    }
+
+    /**
+     * Surové riadky postupu → kroky. [lineIsStep] = každý prvok je už samostatný krok (HowToStep, <li>); inak sa riadky
+     * spájajú podľa číslovania (pokračovanie kroku na ďalšom riadku) a podľa malého písmena na začiatku riadka.
+     */
+    internal fun cleanSteps(rawLines: List<String>, lineIsStep: Boolean): Pair<List<String>, Boolean> {
+        val lines = rawLines.map { normalize(decodeEntities(it)) }.filter { it.isNotBlank() }
+        // odsek „1. a … 2. b … 3. c …“ v jednom riadku → samostatné riadky
+        val expanded = lines.flatMap { l ->
+            if (!lineIsStep && Regex("^\\d{1,2}[.)]\\s").containsMatchIn(l) && INLINE_NUMBERED.findAll(l).count() >= 1 && Regex("\\s2[.)]\\s+\\p{Lu}").containsMatchIn(l)) l.split(INLINE_NUMBERED) else listOf(l)
+        }
+        val numberedMode = !lineIsStep && expanded.count { JUST_NUMBER.matches(it) || Meals.stripStepLead(it) != it } >= 2
+        val steps = ArrayList<String>()
+        var forceNew = true
+        for (line in expanded) {
+            if (fold(line).trimEnd(':', ' ', '.') in NOISE) continue
+            if (JUST_NUMBER.matches(line)) { forceNew = true; continue }
+            val stripped = Meals.stripStepLead(line)
+            val numbered = stripped != line
+            // samotné časy a údaje („20 min“, „Varenie“, „Porcie: 4“) nie sú kroky
+            val metaLike = stripped.length <= 20 && !stripped.endsWith(".") && isMeta(stripped)
+            if (stripped.isBlank() || PURE_META.matches(stripped) || metaLike || stripped.none { it.isLetter() }) { if (numbered) forceNew = true; continue }
+            val prev = steps.lastOrNull()
+            val continues = !lineIsStep && !forceNew && !numbered && prev != null &&
+                (numberedMode || (stripped.first().isLowerCase() && prev.last() !in ".!?:;…"))
+            if (continues) steps[steps.lastIndex] = "$prev $stripped" else steps += stripped
+            forceNew = false
+        }
+        return limitSteps(steps)
+    }
+
+    /** Dlhé kroky sa rozdelia po vetách, jeden dlhý odsek na pár krokov a nakoniec sa postup obmedzí (počet aj dĺžka). */
+    private fun limitSteps(steps0: List<String>): Pair<List<String>, Boolean> {
+        var steps = steps0.filterIndexed { i, s -> i == 0 || s != steps0[i - 1] }
+        // jeden dlhý odsek bez číslovania → kroky po vetách (~250 znakov)
+        if (steps.size <= 2 && steps.any { it.length > 500 }) {
+            steps = steps.flatMap { groupSentences(it, 250) }
+        }
+        steps = steps.flatMap { if (it.length > MAX_STEP_CHARS) groupSentences(it, 800) else listOf(it) }
+        if (steps.isNotEmpty() && fold(steps.last()).trimEnd('!', '.', ' ').startsWith("dobru chut")) steps = steps.dropLast(1)
+        var cut = false
+        val kept = ArrayList<String>()
+        var chars = 0
+        for (s in steps) {
+            if (kept.size >= MAX_STEPS || chars + s.length > MAX_STEPS_CHARS) { cut = true; break }
+            kept += s
+            chars += s.length
+        }
+        return kept to cut
+    }
+
+    /** Vety zoskupené do kúskov približne [target] znakov; veta sa nikdy nerozreže (okrem extrémne dlhej bez bodky). */
+    private fun groupSentences(text: String, target: Int): List<String> {
+        val out = ArrayList<String>()
+        var cur = StringBuilder()
+        for (sentence in text.split(SENTENCE_END)) {
+            if (cur.isNotEmpty() && cur.length + sentence.length > target) { out += cur.toString(); cur = StringBuilder() }
+            if (cur.isNotEmpty()) cur.append(' ')
+            cur.append(sentence)
+        }
+        if (cur.isNotEmpty()) out += cur.toString()
+        // veta bez bodky, ktorá je sama dlhšia než povolené: rozdelí sa po slovách
+        return out.flatMap { piece ->
+            if (piece.length <= MAX_STEP_CHARS) listOf(piece)
+            else {
+                val words = piece.split(' ')
+                val parts = ArrayList<String>()
+                var line = StringBuilder()
+                for (w in words) {
+                    if (line.isNotEmpty() && line.length + w.length + 1 > 800) { parts += line.toString(); line = StringBuilder() }
+                    if (line.isNotEmpty()) line.append(' ')
+                    line.append(w)
+                }
+                if (line.isNotEmpty()) parts += line.toString()
+                parts
+            }
+        }
+    }
+
+    /** HTML entity (&lt; &gt; &ndash; &#8211; …) na znaky. */
+    private fun decodeEntities(s: String): String {
+        var t = s
+        val named = mapOf(
+            "&nbsp;" to " ", "&amp;" to "&", "&quot;" to "\"", "&lt;" to "<", "&gt;" to ">", "&apos;" to "'", "&#39;" to "'",
+            "&ndash;" to "–", "&mdash;" to "—", "&hellip;" to "…", "&deg;" to "°", "&frac12;" to "½", "&laquo;" to "«", "&raquo;" to "»",
+        )
+        for ((k, v) in named) t = t.replace(k, v)
+        t = Regex("&#(\\d{1,6});").replace(t) { m -> m.groupValues[1].toIntOrNull()?.let { String(Character.toChars(it)) } ?: m.value }
+        t = Regex("&#[xX]([0-9a-fA-F]{1,6});").replace(t) { m -> m.groupValues[1].toIntOrNull(16)?.let { String(Character.toChars(it)) } ?: m.value }
+        return t
+    }
+
+    /** HTML úryvok → riadky: konce odsekov, položiek zoznamu a <br> sú nové riadky, značky preč. */
+    private fun htmlToLines(html: String): List<String> =
+        decodeEntities(html.replace(Regex("(?i)<\\s*br\\s*/?>|</\\s*(?:p|li|div|h\\d|tr)\\s*>"), "\n").replace(Regex("<[^>]+>"), ""))
+            .lines().map { it.trim() }.filter { it.isNotEmpty() }
+
+    /** JSON-LD recipeInstructions: text, pole textov, HowToStep, HowToSection (s názvom sekcie pri prvom kroku). */
+    private fun instructionSteps(node: Any?, section: String = ""): List<String> {
+        val out = ArrayList<String>()
+        when (node) {
+            is String -> out += htmlToLines(node)
+            is JSONArray -> {
+                var first = true
+                for (i in 0 until node.length()) {
+                    val sub = instructionSteps(node.opt(i), if (first) section else "")
+                    if (sub.isNotEmpty()) first = false
+                    out += sub
+                }
+            }
+            is JSONObject -> {
+                val items = node.opt("itemListElement")
+                if (items != null) {
+                    val name = normalize(decodeEntities(node.optString("name"))).trim().trimEnd(':')
+                    out += instructionSteps(items, if (name.isNotEmpty()) name else section)
+                } else {
+                    val text = htmlToLines(node.optString("text").ifBlank { node.optString("name") }).joinToString(" ")
+                    if (text.isNotBlank()) out += if (section.isNotEmpty()) "$section: $text" else text
+                }
+            }
+        }
+        return if (section.isNotEmpty() && node is String && out.isNotEmpty()) listOf("$section: ${out.first()}") + out.drop(1) else out
     }
 
     /** Ak je celý text jedna adresa (http/https), vráti ju. */
@@ -637,7 +803,8 @@ object RecipeImport {
             val yieldRaw = r.opt("recipeYield")?.let { if (it is JSONArray) it.optString(0) else it.toString() }.orEmpty()
             val portions = Regex("\\d{1,2}").find(yieldRaw)?.value?.toIntOrNull()?.coerceIn(1, 24) ?: 4
             val title = normalize(r.optString("name")).replaceFirstChar { it.uppercase() }
-            return Result(title, portions, list, skipped.take(12))
+            val (steps, cut) = cleanSteps(instructionSteps(r.opt("recipeInstructions")), lineIsStep = true)
+            return Result(title, portions, list, skipped.take(12), steps, cut)
         }
         return fromMicrodata(html, known)
     }
@@ -654,7 +821,10 @@ object RecipeImport {
         val title = Regex("<h1[^>]*>(.*?)</h1>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)?.let { stripTags(it.groupValues[1]) }.orEmpty()
         val yieldRaw = Regex("itemprop\\s*=\\s*[\"']recipeYield[\"'][^>]*>(.*?)</", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)?.let { stripTags(it.groupValues[1]) }.orEmpty()
         val portions = Regex("\\d{1,2}").find(yieldRaw)?.value?.toIntOrNull()?.coerceIn(1, 24) ?: 4
-        return Result(title.replaceFirstChar { it.uppercase() }, portions, parsed.ingredients, parsed.skipped)
+        val blocks = Regex("<(\\w+)[^>]*itemprop\\s*=\\s*[\"']recipeInstructions[\"'][^>]*>(.*?)</\\1>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            .findAll(html).flatMap { htmlToLines(it.groupValues[2]).asSequence() }.toList()
+        val (steps, cut) = cleanSteps(blocks, lineIsStep = true)
+        return Result(title.replaceFirstChar { it.uppercase() }, portions, parsed.ingredients, parsed.skipped, steps, cut)
     }
 
     private fun isRecipe(o: JSONObject): Boolean {

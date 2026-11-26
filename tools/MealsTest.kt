@@ -418,6 +418,29 @@ fun main() {
     val rtRecipe = Meals.recipeFrom(Meals.recipeObj(rizoto))!!
     check("soft: recept so strúčikmi prežije uloženie a synchronizáciu (JSON)", rtRecipe.ingredients.any { it.name == "Cesnak" && qtyEq(it.amount, 2.0) && it.unit == "strúčik" } && rtRecipe.ingredients.any { it.name == "Soľ" && qtyEq(it.amount, 0.5) && it.unit == "ČL" })
     check("soft: lyžica olivového oleja či korenia je vždy doma, fľaša oleja nie", Meals.isHomeBasic("Olej olivový", "ČL") && Meals.isHomeBasic("Korenie na cestoviny", "PL") && Meals.isHomeBasic("Morská soľ", "hrsť") && !Meals.isHomeBasic("Olej olivový", "ml") && !Meals.isHomeBasic("Med", "PL"))
+    // ── postup prípravy ─────────────────────────────────────────────────────────
+    val withSteps = rizoto.copy(steps = listOf("Ryžu uvaríme podľa návodu.", "Huby orestujeme s cesnakom.", "Zmiešame a posypeme koriandrom."))
+    val stBack = Meals.recipeFrom(Meals.recipeObj(withSteps))!!
+    check("postup: kroky prežijú uloženie (JSON) v poradí", stBack.steps == withSteps.steps && stBack.ingredients.size == withSteps.ingredients.size)
+    check("postup: recept bez postupu nemá v JSON pole st a načíta sa s prázdnym zoznamom", !Meals.recipeObj(rizoto).has("st") && Meals.recipeFrom(Meals.recipeObj(rizoto))!!.steps.isEmpty())
+    check("postup: starý záznam bez poľa st sa načíta bez chyby", Meals.recipeFrom(org.json.JSONObject("""{"i":"x","n":"Stary","p":2,"g":[],"ts":5}"""))!!.steps.isEmpty())
+    check("postup: prázdne a medzerové kroky v JSON sa zahodia", Meals.recipeFrom(org.json.JSONObject("""{"i":"x","n":"A","g":[],"st":["  Zmiešame  ","","   "]}"""))!!.steps == listOf("Zmiešame"))
+    check("postup: text z editora – jeden riadok = jeden krok, číslovanie a odrážky preč", Meals.stepsFromText("1. Ryžu uvaríme.\n\n2) Huby orestujeme.\r\n- Zmiešame.\nKrok 4: Podávame.\n  \n") == listOf("Ryžu uvaríme.", "Huby orestujeme.", "Zmiešame.", "Podávame."))
+    check("postup: číslo na začiatku, ktoré je množstvo, sa nezahodí", Meals.stepsFromText("2 PL oleja zahrejeme.\n180 °C rúru predhrejeme.") == listOf("2 PL oleja zahrejeme.", "180 °C rúru predhrejeme."))
+    check("postup: kroky do textu a späť", Meals.stepsFromText(Meals.stepsToText(withSteps.steps)) == withSteps.steps)
+    check("postup: skloňovanie počtu krokov", Meals.stepsCountText(1) == "1 krok" && Meals.stepsCountText(3) == "3 kroky" && Meals.stepsCountText(5) == "5 krokov" && Meals.stepsCountText(12) == "12 krokov")
+    // postup sa pri zmene porcií a plánovaní nijako nedotkne surovín
+    check("postup: suroviny a nákup sa nezmenia", Meals.scaledIngredients(withSteps, 4).map { it.name to it.amount } == Meals.scaledIngredients(rizoto, 4).map { it.name to it.amount })
+    // dlhý postup prejde synchronizáciou (delenie, šifrovanie, zloženie) a recept je po príchode rovnaký
+    val longSteps = (1..30).map { "Krok $it: Ryžu a huby postupne zmiešame, osolíme, okoreníme a necháme prejsť, kým nie je všetko dobre prepečené a voňavé." }
+    val longRecipe = withSteps.copy(steps = longSteps, updatedAt = 777L, deviceId = "tel1")
+    val longRec = HouseSync.record(HouseSync.KIND_RECIPE, longRecipe.id, longRecipe.updatedAt, longRecipe.deviceId, false, Meals.recipeObj(longRecipe))
+    val longPacks = HouseSync.pack("telA", HouseSync.TYPE_ITEMS, listOf(longRec))
+    val longItems = longPacks.flatMap { HouseSync.envelopeItems(HouseSync.parseEnvelope(it)!!) }
+    val (_, longWhole) = HouseSync.reassemble(org.json.JSONObject(), longItems, 10L)
+    val longBack = Meals.recipeFrom(longWhole.single().getJSONObject("p"))!!
+    check("postup: recept s ${longSteps.size} krokmi sa rozdelí na ${longPacks.size} správ a po zložení je rovnaký", longPacks.size >= 2 && longBack.steps == longSteps && longBack.ingredients == longRecipe.ingredients && longBack.name == longRecipe.name)
+
     println("MealsTest OK")
 }
 

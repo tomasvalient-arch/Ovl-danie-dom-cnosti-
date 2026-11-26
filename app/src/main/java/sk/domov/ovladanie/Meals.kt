@@ -69,6 +69,8 @@ object Meals {
         val updatedAt: Long = 0,
         val deleted: Boolean = false,
         val deviceId: String = "",
+        /** Postup prípravy: jeden krok = jeden prvok (bez číslovania, to sa dopĺňa pri zobrazení). */
+        val steps: List<String> = emptyList(),
     )
 
     data class Meal(
@@ -420,6 +422,34 @@ object Meals {
         // do nákupného zoznamu ide len názov: strúčiky či lyžice sa nekupujú (cesnak kúpiš celý)
         if (isSoft(unit)) return n
         return "$n ${formatQty(amount, unit)}"
+    }
+
+    // ── postup prípravy ─────────────────────────────────────────────────────
+
+    /** Začiatok kroku, ktorý nie je text: číslovanie („1.“, „2)“, „Krok 3:“) alebo odrážka. */
+    private val STEP_LEAD = Regex(
+        """^\s*(?:(?:krok|bod)\s*)?\d{1,2}\s*[.):]\s+|^\s*(?:krok|bod)\s*\d{1,2}\s*[-–—:.)]?\s*|^\s*[•·▪●◦■□☐✓✔*]\s+|^\s*[-–—]\s+""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Krok bez číslovania a odrážky na začiatku („2. Pridáme cibuľu“ → „Pridáme cibuľu“). */
+    fun stripStepLead(line: String): String = line.replaceFirst(STEP_LEAD, "").trim()
+
+    /** Orezané kroky bez prázdnych. */
+    fun normalizeSteps(steps: List<String>): List<String> = steps.map { it.trim() }.filter { it.isNotEmpty() }
+
+    /** Postup ako text pre editor: jeden krok na riadok. */
+    fun stepsToText(steps: List<String>): String = steps.joinToString("\n")
+
+    /** Text z editora → kroky: jeden riadok = jeden krok, číslovanie a odrážky na začiatku sa zahodia (doplní sa pri zobrazení). */
+    fun stepsFromText(text: String): List<String> =
+        text.replace("\r", "").lines().map { stripStepLead(it) }.filter { it.isNotEmpty() }
+
+    /** „1 krok“, „2 kroky“, „5 krokov“. */
+    fun stepsCountText(n: Int): String = when {
+        n == 1 -> "1 krok"
+        n in 2..4 -> "$n kroky"
+        else -> "$n krokov"
     }
 
     fun fmtNum(amount: Double): String {
@@ -1006,6 +1036,7 @@ object Meals {
                 a.put(JSONObject().put("n", ing.name).put("a", ing.amount).put("u", ing.unit))
             }
         })
+        .also { o -> if (r.steps.isNotEmpty()) o.put("st", JSONArray(r.steps)) }
         .put("ts", r.updatedAt)
         .put("x", r.deleted)
         .put("dv", r.deviceId)
@@ -1056,6 +1087,7 @@ object Meals {
             updatedAt = o.optLong("ts"),
             deleted = o.optBoolean("x"),
             deviceId = o.optString("dv"),
+            steps = o.optJSONArray("st")?.let { a -> (0 until a.length()).map { a.optString(it) } }?.let { normalizeSteps(it) } ?: emptyList(),
         )
     }
 

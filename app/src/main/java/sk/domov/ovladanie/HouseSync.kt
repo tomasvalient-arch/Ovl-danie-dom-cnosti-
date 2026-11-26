@@ -28,6 +28,17 @@ object HouseSync {
     const val KIND_RECIPE = "recipe"
     const val KIND_MEAL = "meal"
     const val KIND_PANTRY = "pantry"
+
+    /**
+     * Časť príliš veľkého záznamu (napr. recept s dlhým postupom nad limit správy ntfy). Nie je v [KINDS]: staršia verzia
+     * ju bez chyby preskočí, nová ju cez [reassemble] zloží späť na pôvodný záznam.
+     */
+    const val KIND_PART = "part"
+    /** Ako dlho sa držia nekompletné časti, kým nepríde zvyšok (potom sa zahodia; snímka ich pošle znova). */
+    const val PART_TTL_MS = 3L * 24 * 60 * 60 * 1000
+    private const val PART_MAX_COUNT = 64
+    private const val PART_MAX_ENTRIES = 100
+    private const val PART_MAX_CHARS = 200_000
     val KINDS = setOf(KIND_EVENT, KIND_SHOP, KIND_RECIPE, KIND_MEAL, KIND_PANTRY)
     const val TYPE_ITEMS = "items"
     const val TYPE_WANT = "want"
@@ -187,6 +198,106 @@ object HouseSync {
     fun pack(from: String, type: String, items: List<JSONObject>): List<String> {
         if (type == TYPE_WANT) return listOf(envelope(from, TYPE_WANT).toString())
         if (items.isEmpty()) return emptyList()
+        return packAll(from, type, items.flatMap { item ->
+            if (item.optString("k") != KIND_PART && envelope(from, type, listOf(item)).toString().length > MAX_PLAIN) splitRecord(from, type, item)
+            else listOf(item)
+        })
+    }
+
+    private fun utf8Len(s: String) = s.toByteArray(Charsets.UTF_8).size
+
+    /** Rozdelí text na kúsky najviac [size] znakov tak, aby sa nepretrhol náhradný pár (emoji). */
+    private fun chunkText(text: String, size: Int): List<String> {
+        val out = ArrayList<String>()
+        var i = 0
+        while (i < text.length) {
+            var end = minOf(text.length, i + size)
+            if (end < text.length && Character.isHighSurrogate(text[end - 1])) end--
+            out += text.substring(i, end)
+            i = end
+        }
+        return out
+    }
+
+    /**
+     * Rozdelí príliš veľký záznam na časti [KIND_PART], z ktorých každá sa zmestí do jednej správy pod [MAX_PLAIN] bajtov.
+     * Časť nesie kľúč pôvodného záznamu, jeho čas zmeny a telefón, poradie a počet častí.
+     */
+    fun splitRecord(from: String, type: String, rec: JSONObject): List<JSONObject> {
+        val text = rec.toString()
+        val key = keyOf(rec)
+        fun partsOf(size: Int): List<JSONObject> {
+            val chunks = chunkText(text, size)
+            return chunks.mapIndexed { n, c ->
+                JSONObject().put("k", KIND_PART).put("i", key).put("u", rec.optLong("u")).put("d", rec.optString("d"))
+                    .put("n", n).put("of", chunks.size).put("s", c)
+            }
+        }
+        var size = 1300
+        while (size > 100) {
+            val parts = partsOf(size)
+            if (parts.all { utf8Len(envelope(from, type, listOf(it)).toString()) <= MAX_PLAIN }) return parts
+            size -= 150
+        }
+        return partsOf(100)
+    }
+
+    /**
+     * Zloží časti veľkých záznamov späť. [buffer] = rozpracované časti z minulých synchronizácií (ukladá sa medzi nimi),
+     * [incoming] = záznamy z novej dávky v poradí. Bežné záznamy prejdú bezo zmeny, časti sa zbierajú, a keď je záznam
+     * kompletný, vráti sa ako jeden celok. Opakovaná časť nič nepokazí a zlý alebo neúplný záznam sa zahodí.
+     */
+    fun reassemble(buffer: JSONObject, incoming: List<JSONObject>, now: Long, maxAge: Long = PART_TTL_MS): Pair<JSONObject, List<JSONObject>> {
+        val buf = try { JSONObject(buffer.toString()) } catch (_: Exception) { JSONObject() }
+        for (k in buf.keys().asSequence().toList()) {
+            val e = buf.optJSONObject(k)
+            if (e == null || now - e.optLong("t") > maxAge) buf.remove(k)
+        }
+        val done = ArrayList<JSONObject>()
+        for (rec in incoming) {
+            if (rec.optString("k") != KIND_PART) { done += rec; continue }
+            val key = rec.optString("i")
+            val of = rec.optInt("of", 0)
+            val n = rec.optInt("n", -1)
+            val chunk = rec.optString("s", "")
+            if (key.isEmpty() || of !in 1..PART_MAX_COUNT || n !in 0 until of || chunk.isEmpty()) continue
+            val bk = "$key|${rec.optLong("u")}|${rec.optString("d")}"
+            var e = buf.optJSONObject(bk)
+            if (e == null || e.optInt("of") != of) {
+                e = JSONObject().put("of", of).put("t", now).put("s", JSONObject())
+                buf.put(bk, e)
+            }
+            val sObj = e.getJSONObject("s")
+            sObj.put(n.toString(), chunk)
+            if (sObj.length() < of) continue
+            val whole = StringBuilder()
+            var complete = true
+            for (i in 0 until of) {
+                val c = sObj.optString(i.toString(), "")
+                if (c.isEmpty()) { complete = false; break }
+                whole.append(c)
+            }
+            if (!complete) continue
+            buf.remove(bk)
+            val original = try { JSONObject(whole.toString()) } catch (_: Exception) { null } ?: continue
+            if (original.optString("k") == KIND_PART || keyOf(original) != key) continue
+            // novší záznam vyhral: staršie nedokončené časti toho istého kľúča už nie sú potrebné
+            for (other in buf.keys().asSequence().toList()) {
+                val parts = other.split('|')
+                if (parts.size == 3 && parts[0] == key && (parts[1].toLongOrNull() ?: 0L) <= rec.optLong("u")) buf.remove(other)
+            }
+            done += original
+        }
+        // strop veľkosti: pri nadmernom množstve sa zahodia najstaršie rozpracované časti
+        fun total(): Int = buf.keys().asSequence().sumOf { buf.optJSONObject(it)?.toString()?.length ?: 0 }
+        while ((buf.length() > PART_MAX_ENTRIES || total() > PART_MAX_CHARS) && buf.length() > 0) {
+            val oldest = buf.keys().asSequence().minByOrNull { buf.optJSONObject(it)?.optLong("t") ?: 0L } ?: break
+            buf.remove(oldest)
+        }
+        return buf to done
+    }
+
+    private fun packAll(from: String, type: String, items: List<JSONObject>): List<String> {
         val out = ArrayList<String>()
         var batch = ArrayList<JSONObject>()
         fun flush() {

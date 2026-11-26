@@ -112,6 +112,60 @@ fun main() {
     val prunedMeals = HouseSync.pruneTombstones(listOf(pantryTomb, pantryLive), System.currentTimeMillis())
     check("starý tombstone zásob zmizne, živý recept ostane", prunedMeals.map { it.optString("i") } == listOf("liver"))
 
+    // ── veľké záznamy (recept s dlhým postupom) idú po častiach a druhý telefón ich zloží ──────────────────────────
+    fun bigRec(id: String, u: Long, tag: String) = HouseSync.record(
+        HouseSync.KIND_RECIPE, id, u, "dev1", false,
+        JSONObject().put("n", "Veľký recept $tag").put("st", org.json.JSONArray((1..40).map { "Krok $it: \"citát\" – žltý ťahák 🍅 \\ lomítko ${"ľščťžýáíé ".repeat(8)}$tag" })),
+    )
+    fun unpack(packs: List<String>, from: String = "phoneA"): List<JSONObject> = packs.flatMap { plain ->
+        val token = HouseSync.encryptText(plain, aes)
+        check("obálka sa zmestí do limitu ntfy aj po šifrovaní (${token.length} B)", token.length <= 3900)
+        val env = HouseSync.parseEnvelope(HouseSync.decryptText(token, aes)!!)!!
+        check("obálka prežije šifrovanie bez poškodenia znakov", env.optString("f") == from)
+        HouseSync.envelopeItems(env)
+    }
+    val big = bigRec("r1", 100L, "A")
+    check("veľký záznam je naozaj väčší než limit", big.toString().length > HouseSync.MAX_PLAIN * 2)
+    val bigPacks = HouseSync.pack("phoneA", HouseSync.TYPE_ITEMS, listOf(big))
+    check("veľký záznam sa rozdelí na viac správ", bigPacks.size >= 3)
+    val bigItems = unpack(bigPacks)
+    check("posiela sa len časťami druhu part", bigItems.isNotEmpty() && bigItems.all { it.optString("k") == HouseSync.KIND_PART && it.optInt("of") == bigItems.size })
+    val (buf1, whole1) = HouseSync.reassemble(JSONObject(), bigItems, 1000L)
+    check("časti sa zložia presne na pôvodný záznam (aj diakritika, emoji, úvodzovky)", whole1.size == 1 && whole1[0].toString() == big.toString())
+    check("po zložení v pamäti nič nezostane", buf1.length() == 0)
+
+    var buf = JSONObject()
+    var got = ArrayList<JSONObject>()
+    for (part in bigItems.reversed()) { val (b, w) = HouseSync.reassemble(buf, listOf(part), 1000L); buf = b; got.addAll(w) }
+    check("časti v opačnom poradí a po jednej (ďalšie dotiahnutie) sa zložia raz", got.size == 1 && got[0].toString() == big.toString())
+    buf = JSONObject(); got = ArrayList()
+    val dup = bigItems + bigItems.take(2)
+    for (part in dup) { val (b, w) = HouseSync.reassemble(buf, listOf(part), 1000L); buf = b; got.addAll(w) }
+    check("opakované časti nezložia záznam dvakrát počas jedného behu", got.size == 1 || (got.size == 2 && got.all { it.toString() == big.toString() }))
+    val (bufPartial, nothing) = HouseSync.reassemble(JSONObject(), bigItems.dropLast(1), 1000L)
+    check("neúplný záznam sa nezloží a čaká v pamäti", nothing.isEmpty() && bufPartial.length() == 1)
+    val (bufRest, wholeLater) = HouseSync.reassemble(bufPartial, listOf(bigItems.last()), 2000L)
+    check("posledná časť v ďalšej synchronizácii záznam dokončí", wholeLater.size == 1 && wholeLater[0].toString() == big.toString() && bufRest.length() == 0)
+    val (bufOld, _) = HouseSync.reassemble(bufPartial, emptyList(), 1000L + HouseSync.PART_TTL_MS + 1)
+    check("staré nedokončené časti po čase zmiznú", bufOld.length() == 0)
+
+    val small = HouseSync.record("shop", "s9", 5L, "aa", false, JSONObject().put("n", "Chlieb"))
+    val (_, mixed) = HouseSync.reassemble(JSONObject(), listOf(small) + bigItems + listOf(small), 1000L)
+    check("bežné záznamy prejdú bezo zmeny a v poradí", mixed.size == 3 && mixed[0] === small && mixed[2] === small && mixed[1].optString("i") == "r1")
+    val (_, ignored) = HouseSync.applyIncoming(emptyMap(), bigItems)
+    check("starší telefón časti preskočí (neznámy druh) bez chyby", ignored.isEmpty())
+
+    val bigNew = bigRec("r1", 200L, "B")
+    val newItems = unpack(HouseSync.pack("phoneA", HouseSync.TYPE_ITEMS, listOf(bigNew)))
+    val (bufMix, _) = HouseSync.reassemble(JSONObject(), bigItems.dropLast(1), 1000L)
+    val (bufAfterNew, wholeNew) = HouseSync.reassemble(bufMix, newItems, 1100L)
+    check("novšia verzia záznamu vyčistí staré nedokončené časti", wholeNew.size == 1 && wholeNew[0].optLong("u") == 200L && bufAfterNew.length() == 0)
+    val junk = listOf(JSONObject().put("k", "part").put("i", "recipe:x").put("u", 1).put("of", 0).put("n", 5).put("s", "zz"), JSONObject().put("k", "part"), JSONObject().put("k", "part").put("i", "recipe:x").put("u", 1).put("d", "a").put("of", 2).put("n", 0).put("s", "{nie"), JSONObject().put("k", "part").put("i", "recipe:x").put("u", 1).put("d", "a").put("of", 2).put("n", 1).put("s", "json}"))
+    val (_, junkOut) = HouseSync.reassemble(JSONObject(), junk, 1000L)
+    check("poškodené časti sa zahodia bez výnimky", junkOut.isEmpty())
+    val smallPacks = HouseSync.pack("phoneA", HouseSync.TYPE_ITEMS, listOf(small))
+    check("malý záznam sa nedelí", smallPacks.size == 1 && unpack(smallPacks).single().optString("k") == "shop")
+
     println("HouseSyncTest OK")
 }
 

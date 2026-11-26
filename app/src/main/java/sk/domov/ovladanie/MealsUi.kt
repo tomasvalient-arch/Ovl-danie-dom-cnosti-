@@ -499,7 +499,7 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
             onDismiss = { importOpen = false },
             onParsed = { r ->
                 importOpen = false
-                editingRecipe = Meals.Recipe(id = Meals.newRecipeId(), name = r.title, portions = r.portions, ingredients = r.ingredients)
+                editingRecipe = Meals.Recipe(id = Meals.newRecipeId(), name = r.title, portions = r.portions, ingredients = r.ingredients, steps = r.steps)
             },
         )
     }
@@ -823,6 +823,30 @@ private fun RecipeDetail(
         if (rows.isEmpty() && fuzzy.isEmpty()) {
             Text("V recepte zatiaľ nie sú suroviny. Ťukni na Upraviť.", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
         }
+        if (recipe.steps.isNotEmpty()) {
+            SectionLabel("Postup · ${Meals.stepsCountText(recipe.steps.size)}")
+            DomovCard(padding = 12.dp, spacing = 10.dp) {
+                recipe.steps.forEachIndexed { i, step ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "${i + 1}.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = scheme.primary,
+                            modifier = Modifier.width(26.dp),
+                        )
+                        Text(step, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    }
+                }
+                if (portions != recipe.portions) {
+                    Text(
+                        "Čísla v postupe sú pre ${Meals.portionsText(recipe.portions)}, neprepočítavajú sa. Suroviny hore áno.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (meal != null && !meal.cooked) {
                 MealsCta("Uvarené", icon = Sym.skillet, ghost = true, modifier = Modifier.weight(1f), onClick = onCooked)
@@ -874,6 +898,7 @@ private fun RecipeEditor(
     var name by remember { mutableStateOf(initial.name) }
     var portions by remember { mutableIntStateOf(initial.portions.coerceAtLeast(1)) }
     var ings by remember { mutableStateOf(initial.ingredients.ifEmpty { listOf(Meals.Ingredient("", 1.0, "ks")) }) }
+    var stepsText by remember { mutableStateOf(Meals.stepsToText(initial.steps)) }
     var confirmDelete by remember { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
     fun cleanIngredients(): List<Meals.Ingredient> = ings.mapNotNull {
@@ -884,9 +909,9 @@ private fun RecipeEditor(
     }
     fun commit() {
         if (name.isBlank()) return
-        onSave(initial.copy(name = name.trim(), portions = portions, ingredients = cleanIngredients()))
+        onSave(initial.copy(name = name.trim(), portions = portions, ingredients = cleanIngredients(), steps = Meals.stepsFromText(stepsText)))
     }
-    LaunchedEffect(name, portions, ings) {
+    LaunchedEffect(name, portions, ings, stepsText) {
         onRegisterSave { commit() }
     }
     DisposableEffect(Unit) {
@@ -986,6 +1011,18 @@ private fun RecipeEditor(
                 }
             }
             TextButton(onClick = { ings = ings + Meals.Ingredient("", 1.0, "ks") }) { Text("Pridať surovinu") }
+            SectionLabel("Postup")
+            DomovTextField(
+                value = stepsText,
+                onValueChange = { stepsText = it },
+                placeholder = { Text("Každý krok na nový riadok, napr.\nRyžu uvaríme podľa návodu.\nHuby orestujeme s cesnakom.") },
+                supportingText = {
+                    val n = Meals.stepsFromText(stepsText).size
+                    Text(if (n == 0) "Číslovanie sa doplní samo." else Meals.stepsCountText(n))
+                },
+                minLines = 4,
+                modifier = Modifier.fillMaxWidth(),
+            )
             if (!isNew && onDelete != null) {
                 TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                     Text("Odstrániť recept", color = scheme.error)
@@ -1654,12 +1691,12 @@ private fun ImportRecipeDialog(
     val shown = preview
     DomovAlert(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text(if (shown == null) "Recept z textu alebo odkazu" else "Rozpoznané suroviny") },
+        title = { Text(if (shown == null) "Recept z textu alebo odkazu" else "Rozpoznaný recept") },
         text = {
             if (shown == null) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Vlož zoznam surovín (jedna na riadok, voliteľne s názvom a počtom porcií), alebo odkaz na stránku s receptom.",
+                        "Vlož zoznam surovín (jedna na riadok, voliteľne s názvom a počtom porcií) a pod nadpisom Postup kroky prípravy, alebo odkaz na stránku s receptom.",
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant,
                     )
@@ -1696,6 +1733,19 @@ private fun ImportRecipeDialog(
                             Text(ing.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                             Text(qty, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
                         }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    if (shown.steps.isNotEmpty()) {
+                        Text("Postup · ${Meals.stepsCountText(shown.steps.size)}", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+                        shown.steps.take(2).forEachIndexed { i, st ->
+                            Text("${i + 1}. $st", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (shown.steps.size > 2) Text("…", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                        if (shown.stepsCut) {
+                            Text("Postup bol veľmi dlhý, časť na konci sa vynechala.", style = MaterialTheme.typography.bodySmall, color = scheme.error)
+                        }
+                    } else {
+                        Text("Postup sa nenašiel, môžeš ho doplniť v editore.", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                     }
                     if (shown.skipped.isNotEmpty()) {
                         Spacer(Modifier.height(6.dp))
