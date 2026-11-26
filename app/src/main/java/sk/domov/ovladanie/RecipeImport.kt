@@ -347,10 +347,34 @@ object RecipeImport {
     private fun looksLikeName(t: String): Boolean =
         t.isNotEmpty() && t.length <= 50 && !t.endsWith(".") && !t.endsWith("!") && !t.endsWith("?") && t.split(' ').size <= 4 && t.any { it.isLetter() }
 
+    /** Tvar „názov , množstvo“ (tak ich dávajú niektoré stránky): „parmezán , 30 g strúhaný“, „vňať koriandrová , hrsť“, „cesnak , 2 strúčiky“. */
+    private fun commaQty(t: String, known: List<Meals.Known>): Meals.Ingredient? {
+        val i = t.lastIndexOf(',')
+        if (i <= 0) return null
+        val head = t.substring(0, i).trim()
+        val tail = t.substring(i + 1).trim()
+        if (head.isEmpty() || head.any { it.isDigit() } || head.split(' ').size > 6) return null
+        val q = qtyLine(tail, true) ?: return null
+        return qtyFirst("${q.text} $head ${q.qualifier}".trim(), known)
+    }
+
+    /** Opačný tvar „množstvo , názov“: „30 g strúhaný , parmezán“, „hrsť , vňať koriandrová“, „150 g , ryža“. */
+    private fun commaQtyFirst(t: String, known: List<Meals.Known>): Meals.Ingredient? {
+        val i = t.indexOf(',')
+        if (i <= 0) return null
+        val head = t.substring(0, i).trim()
+        val tail = t.substring(i + 1).trim()
+        if (tail.isEmpty() || tail.any { it.isDigit() } || tail.split(' ').size > 6) return null
+        val q = qtyLine(head, true) ?: return null
+        return qtyFirst("${q.text} $tail ${q.qualifier}".trim(), known)
+    }
+
     /** Jeden riadok → zoznam surovín (zvyčajne jedna; „soľ, korenie“ dá dve). Prázdny = nepoznané. */
     fun parseAll(line: String, known: List<Meals.Known> = emptyList(), lenient: Boolean = false): List<Meals.Ingredient> {
         var t = clean(line, lenient)
         if (t.isEmpty() || t.length > 200) return emptyList()
+        commaQty(t, known)?.let { return listOf(it) }
+        commaQtyFirst(t, known)?.let { return listOf(it) }
         // poznámka na konci („Zemiaky 500 g (varené)“, „Zemiaky 500 g, varené“) sa pri hľadaní množstva neráta
         t = t.replace(Regex("\\s*\\((?![^)]*\\d)[^)]*\\)\\s*$"), "").trim()
         if (t.contains(", ")) {
@@ -567,20 +591,33 @@ object RecipeImport {
             }
             val r = findRecipe(root) ?: continue
             val ings = r.optJSONArray("recipeIngredient") ?: r.optJSONArray("ingredients") ?: continue
-            val list = ArrayList<Meals.Ingredient>()
-            val skipped = ArrayList<String>()
-            for (i in 0 until ings.length()) {
-                val s = ings.optString(i)
-                val parsed = parseAll(s, known, lenient = true)
-                if (parsed.isEmpty()) { if (s.isNotBlank()) skipped += normalize(s) } else list += parsed
-            }
+            // položky sa spracujú ako text s nadpisom Suroviny: rovnaké pravidlá ako pri vloženom texte (aj spájanie „množstvo / názov“)
+            val joined = (0 until ings.length()).map { ings.optString(it) }.filter { it.isNotBlank() }
+            val parsed = parse("Suroviny\n" + joined.joinToString("\n") { it.replace('\n', ' ') }, known)
+            val list = parsed.ingredients
+            val skipped = parsed.skipped
             if (list.isEmpty()) continue
             val yieldRaw = r.opt("recipeYield")?.let { if (it is JSONArray) it.optString(0) else it.toString() }.orEmpty()
             val portions = Regex("\\d{1,2}").find(yieldRaw)?.value?.toIntOrNull()?.coerceIn(1, 24) ?: 4
             val title = normalize(r.optString("name")).replaceFirstChar { it.uppercase() }
             return Result(title, portions, list, skipped.take(12))
         }
-        return null
+        return fromMicrodata(html, known)
+    }
+
+    private fun stripTags(s: String): String = normalize(s.replace(Regex("<[^>]+>"), " "))
+
+    /** Záloha pre stránky bez JSON-LD: suroviny v značkách s itemprop="recipeIngredient" (alebo „ingredients“). */
+    private fun fromMicrodata(html: String, known: List<Meals.Known>): Result? {
+        val items = Regex("itemprop\\s*=\\s*[\"'](?:recipeIngredient|ingredients)[\"'][^>]*>(.*?)</(?:li|span|p|div|td|tr)>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            .findAll(html).map { stripTags(it.groupValues[1]) }.filter { it.isNotBlank() }.toList()
+        if (items.isEmpty()) return null
+        val parsed = parse("Suroviny\n" + items.joinToString("\n"), known)
+        if (parsed.ingredients.isEmpty()) return null
+        val title = Regex("<h1[^>]*>(.*?)</h1>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)?.let { stripTags(it.groupValues[1]) }.orEmpty()
+        val yieldRaw = Regex("itemprop\\s*=\\s*[\"']recipeYield[\"'][^>]*>(.*?)</", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)?.let { stripTags(it.groupValues[1]) }.orEmpty()
+        val portions = Regex("\\d{1,2}").find(yieldRaw)?.value?.toIntOrNull()?.coerceIn(1, 24) ?: 4
+        return Result(title.replaceFirstChar { it.uppercase() }, portions, parsed.ingredients, parsed.skipped)
     }
 
     private fun isRecipe(o: JSONObject): Boolean {

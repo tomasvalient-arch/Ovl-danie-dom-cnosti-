@@ -87,6 +87,25 @@ fun main() {
     val steps = RecipeImport.parse("Rezne\n1\nNaklepeme mäso.\n2\nObalíme.")
     check("čísla krokov bez nadpisu Suroviny nie sú suroviny", steps.ingredients.isEmpty())
 
+    // odkaz na stránku: JSON-LD s položkami „názov , množstvo“ (varecha.pravda.sk)
+    val ld = """<html><head><script type="application/ld+json">{"@context":"https://schema.org","@type":"Recipe","name":"Ryža s hubami, parmezánom a koriandrom","recipeYield":"2 porcie","recipeIngredient":["ryža SOS Jasmine Brown , 150 g","šampiňóny hnedé , 250 g","cesnak , 2 strúčiky","parmezán , 30 g strúhaný","vňať koriandrová , hrsť","olej olivový , 1 ČL","korenie na cestoviny , 1 ČL","soľ , 1/2 ČL"]}</script></head><body></body></html>"""
+    val web = RecipeImport.fromHtml(ld)!!
+    check("stránka: názov a 2 porcie", web.title == "Ryža s hubami, parmezánom a koriandrom" && web.portions == 2)
+    check("stránka: presne 8 surovín, nič nerozpoznané navyše", web.ingredients.size == 8 && web.skipped.isEmpty())
+    check("stránka: parmezán strúhaný 30 g", web.has("Parmezán strúhaný", 30.0, "g") && web.has("Ryža SOS Jasmine Brown", 150.0, "g") && web.has("Šampiňóny hnedé", 250.0, "g"))
+    check("stránka: hrsť je množstvo, nie surovina", web.fuzzy("Vňať koriandrová") && web.ingredients.none { it.name == "Hrsť" } && web.fuzzy("Cesnak") && web.fuzzy("Soľ"))
+    val ld2 = """<script type="application/ld+json">{"@type":"Recipe","name":"X","recipeIngredient":["150 g","ryža","30 g strúhaný","parmezán","2","vajcia"]}</script>"""
+    val web2 = RecipeImport.fromHtml(ld2)!!
+    check("stránka: položky „množstvo“ a „názov“ zvlášť sa spoja", web2.has("Ryža", 150.0, "g") && web2.has("Parmezán strúhaný", 30.0, "g") && web2.has("Vajcia", 2.0, "ks"))
+    val micro = """<html><h1>Palacinky</h1><span itemprop="recipeYield">4 porcie</span><ul><li itemprop="recipeIngredient">250 g múky</li><li itemprop="recipeIngredient">2 vajcia</li><li itemprop="ingredients">5 dl mlieka</li></ul></html>"""
+    val web3 = RecipeImport.fromHtml(micro)!!
+    check("stránka bez JSON-LD: itemprop suroviny", web3.title == "Palacinky" && web3.portions == 4 && web3.has("Múka", 250.0, "g") && web3.has("Mlieko", 500.0, "ml") && web3.ingredients.size == 3)
+    check("stránka bez receptu = null", RecipeImport.fromHtml("<html>nič</html>") == null)
+    // „názov , množstvo“ aj v texte
+    check("riadok „názov , množstvo“", RecipeImport.parseLine("parmezán , 30 g strúhaný")!!.let { it.name == "Parmezán strúhaný" && eq(it.amount, 30.0) && it.unit == "g" } && RecipeImport.parseLine("cibuľa, 2 ks")!!.let { it.name == "Cibuľa" && eq(it.amount, 2.0) })
+    check("riadok „množstvo , názov“", RecipeImport.parseLine("30 g strúhaný , parmezán")!!.let { it.name == "Parmezán strúhaný" && eq(it.amount, 30.0) } && RecipeImport.parseLine("hrsť , vňať koriandrová")!!.let { it.name == "Vňať koriandrová" && Meals.isFuzzy(it.unit) } && RecipeImport.parseLine("150 g , ryža")!!.name == "Ryža" && RecipeImport.parseAll("hrsť , vňať koriandrová").size == 1)
+    check("desatinná čiarka a poznámka za čiarkou sa nepoplietli", RecipeImport.parseLine("Mlieko 1,5 l")!!.let { it.name == "Mlieko" && eq(it.amount, 1.5) } && RecipeImport.parseLine("200 g cibule, nakrájanej")!!.name == "Cibuľa")
+
     // čo nesmie byť surovina
     val o = RecipeImport.parse("Rezne\nPečieme 20 minút pri 180 °C.\n45 min\n2 hodiny\nPorcie 4")
     check("kroky, čas a teplota nie sú suroviny", o.ingredients.isEmpty() && o.title == "Rezne")
