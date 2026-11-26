@@ -1592,8 +1592,8 @@ private fun SuggestSheet(
 }
 
 /**
- * Import receptu: vložený text (suroviny po riadkoch) alebo odkaz na stránku s receptom. Výsledok sa otvorí v editore,
- * kde sa dá všetko ešte opraviť, a uloží sa až tam.
+ * Import receptu: vložený text (suroviny po riadkoch, aj s množstvom za názvom) alebo odkaz na stránku s receptom.
+ * Najprv sa ukáže, čo appka rozpoznala a čomu nerozumela; až potom sa výsledok otvorí v editore, kde sa dá všetko opraviť.
  */
 @Composable
 private fun ImportRecipeDialog(
@@ -1605,7 +1605,9 @@ private fun ImportRecipeDialog(
     var text by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var preview by remember { mutableStateOf<RecipeImport.Result?>(null) }
     val scope = rememberCoroutineScope()
+    val scheme = MaterialTheme.colorScheme
     val url = RecipeImport.asUrl(text)
     fun go() {
         if (busy) return
@@ -1620,45 +1622,88 @@ private fun ImportRecipeDialog(
                     }.getOrNull()
                 }
                 busy = false
-                if (result != null && result.ingredients.isNotEmpty()) onParsed(result)
+                if (result != null && result.ingredients.isNotEmpty()) preview = result
                 else error = "Z tejto stránky sa recept nepodarilo načítať (alebo je bez internetu). Skopíruj text receptu a vlož ho sem."
             }
         } else {
             val r = RecipeImport.parse(text, known)
-            if (r.ingredients.isEmpty()) error = "Nenašli sa žiadne suroviny. Každá surovina nech je na vlastnom riadku, napr. „500 g múky“ alebo „2 vajcia“."
-            else onParsed(r)
+            if (r.ingredients.isEmpty()) error = "Nenašli sa žiadne suroviny. Každá surovina nech je na vlastnom riadku, napr. „500 g múky“, „Múka 500 g“ alebo „2 vajcia“."
+            else preview = r
         }
     }
+    val shown = preview
     DomovAlert(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("Recept z textu alebo odkazu") },
+        title = { Text(if (shown == null) "Recept z textu alebo odkazu" else "Rozpoznané suroviny") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Vlož zoznam surovín (jedna na riadok, voliteľne s názvom a počtom porcií), alebo odkaz na stránku s receptom.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                DomovTextField(
-                    value = text,
-                    onValueChange = { text = it; error = null },
-                    placeholder = { Text("Palacinky\n4 porcie\n250 g múky\n2 vajcia\n500 ml mlieka") },
-                    minLines = 5,
-                    maxLines = 10,
-                    isError = error != null,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                TextButton(onClick = { text = clipboardText(); error = null }, enabled = !busy) { Text("Vložiť zo schránky") }
-                if (error != null) Text(error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                if (busy) Text("Načítavam…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (shown == null) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Vlož zoznam surovín (jedna na riadok, voliteľne s názvom a počtom porcií), alebo odkaz na stránku s receptom.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                    )
+                    DomovTextField(
+                        value = text,
+                        onValueChange = { text = it; error = null },
+                        placeholder = { Text("Palacinky\n4 porcie\n250 g múky\n2 vajcia\n500 ml mlieka") },
+                        minLines = 5,
+                        maxLines = 10,
+                        isError = error != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TextButton(onClick = { text = clipboardText(); error = null }, enabled = !busy) { Text("Vložiť zo schránky") }
+                    if (error != null) Text(error!!, style = MaterialTheme.typography.bodySmall, color = scheme.error)
+                    if (busy) Text("Načítavam…", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        (shown.title.ifBlank { "Bez názvu" }) + " · " + Meals.portionsText(shown.portions),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (shown.ingredients.size <= 2) {
+                        Text(
+                            "Rozpoznal som len ${shown.ingredients.size}. Ak ich je v recepte viac, skontroluj riadky nižšie alebo uprav text.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.error,
+                        )
+                    }
+                    shown.ingredients.forEach { ing ->
+                        val qty = if (ing.amount > 0.0) Meals.formatQty(ing.amount, ing.unit) else ing.unit
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(ing.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            Text(qty, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                        }
+                    }
+                    if (shown.skipped.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Nerozpoznané riadky (nepridajú sa):", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+                        shown.skipped.forEach { sk ->
+                            Text(sk, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
             }
         },
-        confirmButton = { DialogPrimaryButton(onClick = { go() }, enabled = text.isNotBlank() && !busy) { Text(if (url != null) "Načítať" else "Rozpoznať") } },
-        dismissButton = { DialogTextButton(onClick = onDismiss, enabled = !busy) { Text("Zrušiť") } },
+        confirmButton = {
+            if (shown == null) {
+                DialogPrimaryButton(onClick = { go() }, enabled = text.isNotBlank() && !busy) { Text(if (url != null) "Načítať" else "Rozpoznať") }
+            } else {
+                DialogPrimaryButton(onClick = { onParsed(shown) }) { Text("Otvoriť v editore") }
+            }
+        },
+        dismissButton = {
+            if (shown == null) {
+                DialogTextButton(onClick = onDismiss, enabled = !busy) { Text("Zrušiť") }
+            } else {
+                DialogTextButton(onClick = { preview = null }) { Text("Upraviť text") }
+            }
+        },
     )
 }
 
-/** Zaškrtnutie riadku v zoznamoch návrhov: plná fajka, alebo prázdny krúžok. */
 @Composable
 private fun TickMark(on: Boolean) {
     val scheme = MaterialTheme.colorScheme

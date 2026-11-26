@@ -87,3 +87,6 @@ kotlinc -cp "$JSON" $S/Events.kt $S/Meniny.kt $S/Shopping.kt $S/HouseSync.kt $S/
 java -cp "$OUT/meals.jar:$JSON" MealsTestKt
 kotlinc -cp "$JSON" $S/Shopping.kt $S/Meals.kt $S/MealShop.kt $S/RecipeImport.kt $S/MealPlanner.kt tools/MealAutoTest.kt -include-runtime -d "$OUT/mealauto.jar" 2>/dev/null
 java -cp "$OUT/mealauto.jar:$JSON" MealAutoTestKt
+# import receptu z vloženého textu (reálne tvary riadkov, 2. pád → 1. pád, nerozpoznané riadky)
+kotlinc -cp "$JSON" $S/Events.kt $S/Meniny.kt $S/Shopping.kt $S/HouseSync.kt $S/Meals.kt $S/RecipeImport.kt tools/RecipeImportTest.kt -include-runtime -d "$OUT/recipeimport.jar" 2>/dev/null
+java -cp "$OUT/recipeimport.jar:$JSON" RecipeImportTestKt

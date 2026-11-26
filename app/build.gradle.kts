@@ -12,8 +12,8 @@ android {
         applicationId = "sk.domov.ovladanie"
         minSdk = 26
         targetSdk = 35
-        versionCode = 86
-        versionName = "1.66.1"
+        versionCode = 87
+        versionName = "1.66.2"
     }
 
     // Pevný ladiaci kľúč: každý build má rovnaký podpis, takže sa nová verzia dá nainštalovať
