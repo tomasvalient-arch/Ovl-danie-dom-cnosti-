@@ -381,14 +381,29 @@ object RecipeImport {
 
     // ── celý text ─────────────────────────────────────────────────────────────────────────────────────────
 
-    private fun isPureQty(raw: String): Boolean {
+    /** Riadok len s množstvom: [text] = „150 g“ (pri samotnej miere bez čísla „1 hrsť“), [qualifier] = prívlastok za jednotkou („30 g strúhaný“ → strúhaný). */
+    private class QtyLine(val text: String, val qualifier: String)
+
+    private val QTY_ONLY = Regex("^(?:(?:cca|ca\\.?|asi|približne|okolo)\\s+)?($RANGE)\\s*([\\p{L}]+)\\.?(?:\\s+([\\p{L}]{4,}))?$", RegexOption.IGNORE_CASE)
+
+    /** Prívlastok je prídavné meno (strúhaný, čerstvá, mleté, hrubý): končí na ý/á/é/í (s diakritikou), na rozdiel od väčšiny podstatných mien. */
+    private fun isQualifier(w: String): Boolean = w.length >= 5 && w.last() in "ýáéíÝÁÉÍ"
+
+    private val BARE_NUMBER = Regex("^($RANGE)$")
+
+    /** [allowBare] = samotné číslo („2“) je počet kusov; len v časti pod nadpisom Suroviny, aby sa nepomýlilo s číslom kroku. */
+    private fun qtyLine(raw: String, allowBare: Boolean): QtyLine? {
         val t = clean(raw, true)
-        if (t.isEmpty()) return false
-        val f = fold(t)
-        if (f in setOf("stipka", "trocha", "stipku", "trochu")) return true
-        val m = Regex("^(?:(?:cca|ca\\.?|asi)\\s+)?($RANGE)\\s*([\\p{L}]+)?\\.?$", RegexOption.IGNORE_CASE).matchEntire(t) ?: return false
+        if (t.isEmpty()) return null
+        if (allowBare && BARE_NUMBER.matchEntire(t) != null) return QtyLine("$t ks", "")
+        // samotná neurčitá miera bez čísla: „hrsť“, „štipka“
+        if (!t.contains(' ') && !t.any { it.isDigit() } && isFuzzyToken(fold(t))) return QtyLine("1 $t", "")
+        val m = QTY_ONLY.matchEntire(t) ?: return null
         val unit = m.groupValues[2]
-        return unit.isNotEmpty() && isUnitToken(unit)
+        if (!isUnitToken(unit)) return null
+        val qualifier = m.groupValues[3]
+        if (qualifier.isNotEmpty() && !isQualifier(qualifier)) return null
+        return QtyLine("${m.groupValues[1]} $unit", qualifier)
     }
 
     private fun isNameOnly(raw: String): Boolean {
@@ -396,12 +411,15 @@ object RecipeImport {
         if (t.isEmpty() || t.any { it.isDigit() } || isSectionHeader(t)) return false
         val f = fold(t).trimEnd(':', ' ')
         if (f in HEADERS_IN || f in HEADERS_STOP || f in NOISE) return false
+        if (isMeta(t)) return false
         return looksLikeName(t)
     }
 
     /** Spojí „názov / množstvo“ na dvoch riadkoch do jedného („Múka“ + „500 g“ → „500 g Múka“); smer sa určí podľa toho, čo dá viac dvojíc. */
-    private fun pairLines(lines: List<String>, from: Int, to: Int): List<String> {
-        val q = (from until to).filter { isPureQty(lines[it]) }
+    private fun pairLines(lines: List<String>, from: Int, to: Int, allowBare: Boolean): List<String> {
+        val info = HashMap<Int, QtyLine>()
+        for (i in from until to) qtyLine(lines[i], allowBare)?.let { info[i] = it }
+        val q = info.keys.sorted()
         if (q.size < 2) return lines
         fun pairs(nameFirst: Boolean): List<Pair<Int, Int>> {
             val used = HashSet<Int>()
@@ -409,7 +427,7 @@ object RecipeImport {
             for (i in q) {
                 if (i in used) continue
                 val j = if (nameFirst) prevNonEmpty(lines, i, from) else nextNonEmpty(lines, i, to)
-                if (j < 0 || j in used || !isNameOnly(lines[j])) continue
+                if (j < 0 || j in used || j in info || !isNameOnly(lines[j])) continue
                 used += i; used += j
                 out += i to j
             }
@@ -417,11 +435,20 @@ object RecipeImport {
         }
         val nameFirst = pairs(true)
         val qtyFirst = pairs(false)
-        val chosen = if (nameFirst.size >= qtyFirst.size) nameFirst else qtyFirst
+        // zoznam, ktorý začína množstvom, je „množstvo / názov“; ktorý ním končí, je „názov / množstvo“; inak rozhodne počet dvojíc
+        val firstLine = (from until to).firstOrNull { lines[it].isNotBlank() }
+        val lastLine = (to - 1 downTo from).firstOrNull { lines[it].isNotBlank() }
+        val chosen = when {
+            firstLine != null && firstLine in info -> qtyFirst
+            lastLine != null && lastLine in info && firstLine !in info -> nameFirst
+            nameFirst.size >= qtyFirst.size -> nameFirst
+            else -> qtyFirst
+        }
         if (chosen.size < 2) return lines
         val res = lines.toMutableList()
         for ((qi, ni) in chosen) {
-            res[ni] = clean(lines[qi], true) + " " + clean(lines[ni], true)
+            val qty = info.getValue(qi)
+            res[ni] = (qty.text + " " + clean(lines[ni], true) + " " + qty.qualifier).trim()
             res[qi] = ""
         }
         return res
@@ -481,7 +508,7 @@ object RecipeImport {
         // hranice časti so surovinami pre spájanie „názov / množstvo“: od nadpisu Suroviny po Postup
         val headerIdx = first.indexOfFirst { fold(it).trimEnd(':', ' ') in HEADERS_IN }
         val stopIdx = first.indexOfFirst { fold(it).trimEnd(':', ' ') in HEADERS_STOP }.let { s -> if (s < 0 || s <= headerIdx) first.size else s }
-        val lines = pairLines(first, if (headerIdx >= 0) headerIdx + 1 else 0, stopIdx)
+        val lines = pairLines(first, if (headerIdx >= 0) headerIdx + 1 else 0, stopIdx, allowBare = headerIdx >= 0)
         var title = ""
         var portions = 0
         val out = ArrayList<Meals.Ingredient>()

@@ -68,6 +68,25 @@ fun main() {
     val q = RecipeImport.parse("Suroviny\nZemiaky - 500 g (varené)\nMlieko 1 l, polotučné\n250 g – múka\nCukor, 100 g")
     check("poznámka za množstvom a vedúca pomlčka", q.has("Zemiaky", 500.0, "g") && q.has("Mlieko", 1.0, "l") && q.has("Múka", 250.0, "g") && q.has("Cukor", 100.0, "g") && q.ingredients.size == 4)
 
+    // presný text zo skutočnej stránky: množstvo (s tabulátorom) na jednom riadku, názov na ďalšom, prívlastok pri množstve, miera bez čísla
+    val real = RecipeImport.parse("150 g\t\nryža SOS Jasmine Brown\n250 g\t\nšampiňóny hnedé\n2 strúčiky\t\ncesnak\n30 g strúhaný\t\nparmezán\n hrsť\t\nvňať koriandrová\n1 ČL\t\nolej olivový\n1 ČL\t\nkorenie na cestoviny\n1/2 ČL\t\nsoľ")
+    check("reálny text: presne 8 surovín, nič navyše", real.ingredients.size == 8 && real.skipped.isEmpty())
+    check("reálny text: ryža 150 g, šampiňóny 250 g", real.has("Ryža SOS Jasmine Brown", 150.0, "g") && real.has("Šampiňóny hnedé", 250.0, "g"))
+    check("reálny text: parmezán strúhaný 30 g (prívlastok sa pripojí k názvu)", real.has("Parmezán strúhaný", 30.0, "g"))
+    check("reálny text: hrsť + vňať koriandrová", real.fuzzy("Vňať koriandrová") && real.ingredients.none { it.name == "Hrsť" })
+    check("reálny text: cesnak, olej, korenie, soľ", real.fuzzy("Cesnak") && real.fuzzy("Olej olivový") && real.fuzzy("Korenie na cestoviny") && real.fuzzy("Soľ"))
+    // rovnaký recept s hlavičkou Suroviny a nadpisom
+    val real2 = RecipeImport.parse("Ryža s hubami\nSuroviny\n150 g\nryža\n30 g strúhaný\nparmezán\nhrsť\nbazalka\nPostup\nUvaríme.")
+    check("qualifier a hrsť aj s nadpisom", real2.title == "Ryža s hubami" && real2.has("Parmezán strúhaný", 30.0, "g") && real2.fuzzy("Bazalka") && real2.has("Ryža", 150.0, "g") && real2.ingredients.size == 3)
+    // kompletný riadok sa nepáruje s ďalším: „30 g strúhaný parmezán“ + ďalšia surovina
+    val full = RecipeImport.parse("Suroviny\n30 g strúhaný parmezán\n200 g ryže\n2 vajcia")
+    check("kompletné riadky ostanú kompletné", full.has("Strúhaný parmezán", 30.0, "g") && full.has("Ryža", 200.0, "g") && full.has("Vajcia", 2.0, "ks") && full.ingredients.size == 3)
+
+    val bare = RecipeImport.parse("Suroviny\n2\nvajcia\n500 g\nmúka\n1\ncibuľa\nPostup\n1\nCibuľu nakrájame.")
+    check("samotné číslo pred názvom = počet kusov", bare.has("Vajcia", 2.0, "ks") && bare.has("Múka", 500.0, "g") && bare.has("Cibuľa", 1.0, "ks") && bare.ingredients.size == 3)
+    val steps = RecipeImport.parse("Rezne\n1\nNaklepeme mäso.\n2\nObalíme.")
+    check("čísla krokov bez nadpisu Suroviny nie sú suroviny", steps.ingredients.isEmpty())
+
     // čo nesmie byť surovina
     val o = RecipeImport.parse("Rezne\nPečieme 20 minút pri 180 °C.\n45 min\n2 hodiny\nPorcie 4")
     check("kroky, čas a teplota nie sú suroviny", o.ingredients.isEmpty() && o.title == "Rezne")
