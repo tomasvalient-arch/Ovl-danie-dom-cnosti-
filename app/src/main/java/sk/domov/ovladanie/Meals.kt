@@ -129,6 +129,9 @@ object Meals {
     ) {
         fun shopText(): String = formatShop(name, amount, unit)
 
+        /** Text riadku v dialógu: pri mäkkej miere aj s množstvom z receptu („Cesnak 2 strúčiky“), do zoznamu ide len názov. */
+        fun displayText(): String = if (isSoft(unit)) "$name ${formatQty(amount, unit)}" else shopText()
+
         /** Jednoznačný kľúč riadku v dialógu. */
         fun uiKey(): String = "${kind.name}:$itemId:${shopText()}"
     }
@@ -284,6 +287,88 @@ object Meals {
 
     private val FUZZY_FOLD = FUZZY_UNITS.associateBy { fold(it) }
 
+    /**
+     * Mäkké miery: množstvo sa zachová, zobrazí aj škáluje s porciami („2 strúčiky“, „1 PL“, „½ ČL“), ale nedá sa presne
+     * prepočítať na g/ml (aký veľký je strúčik či hrsť, nevieme). Preto sa neodpočítavajú zo zásob a v nákupe sa len overuje,
+     * či surovinu máme (pozri [planShopping]).
+     */
+    class SoftUnit(val label: String, val one: String, val few: String, val many: String, val frac: String)
+
+    val SOFT_UNITS = listOf(
+        SoftUnit("strúčik", "strúčik", "strúčiky", "strúčikov", "strúčika"),
+        SoftUnit("PL", "PL", "PL", "PL", "PL"),
+        SoftUnit("ČL", "ČL", "ČL", "ČL", "ČL"),
+        SoftUnit("hrsť", "hrsť", "hrste", "hrstí", "hrste"),
+        SoftUnit("hrnček", "hrnček", "hrnčeky", "hrnčekov", "hrnčeka"),
+        SoftUnit("balenie", "balenie", "balenia", "balení", "balenia"),
+        SoftUnit("kocka", "kocka", "kocky", "kociek", "kocky"),
+        SoftUnit("plechovka", "plechovka", "plechovky", "plechoviek", "plechovky"),
+        SoftUnit("konzerva", "konzerva", "konzervy", "konzerv", "konzervy"),
+        SoftUnit("pohár", "pohár", "poháre", "pohárov", "pohára"),
+        SoftUnit("šálka", "šálka", "šálky", "šálok", "šálky"),
+        SoftUnit("hlávka", "hlávka", "hlávky", "hláviek", "hlávky"),
+        SoftUnit("kúsok", "kúsok", "kúsky", "kúskov", "kúska"),
+    )
+
+    /** Najčastejšie mäkké miery, ktoré ponúka editor receptu ako čipy (ostatné sa objavia, keď ich recept použije). */
+    val COMMON_SOFT = listOf("strúčik", "PL", "ČL", "hrsť", "hrnček", "balenie")
+
+    private val SOFT_BY_LABEL = SOFT_UNITS.associateBy { it.label.lowercase() }
+
+    /** Skloňované tvary slov (bez skratiek PL/ČL, kde by „cl“ kolidovalo s centilitrom) podľa zjednodušeného tvaru. */
+    private val SOFT_WORDS: Map<String, SoftUnit> = SOFT_UNITS
+        .filter { it.label != "PL" && it.label != "ČL" }
+        .flatMap { u -> listOf(u.one, u.few, u.many, u.frac).map { fold(it) to u } }
+        .toMap()
+
+    /** Kanonický názov mäkkej miery („strúčiky“ → „strúčik“), alebo null. */
+    fun softLabel(unit: String): String? {
+        val t = unit.trim().trimEnd('.')
+        if (t.isEmpty()) return null
+        SOFT_BY_LABEL[t.lowercase()]?.let { return it.label }
+        return SOFT_WORDS[fold(t)]?.label
+    }
+
+    fun isSoft(unit: String): Boolean = softLabel(unit) != null
+
+    /** Tvar slova podľa množstva: 1 strúčik, 2–4 strúčiky, 5 strúčikov, 1,5 strúčika. */
+    fun softWord(label: String, amount: Double): String {
+        val u = SOFT_BY_LABEL[label.lowercase()] ?: return label
+        val whole = abs(amount - round(amount)) < 1e-6
+        val n = round(amount).toLong()
+        return when {
+            !whole -> u.frac
+            n == 1L -> u.one
+            n in 2L..4L -> u.few
+            else -> u.many
+        }
+    }
+
+    /** Množstvo mäkkej miery: celé čísla, polovice, štvrtiny a tretiny ako zlomky (½, 1½, ¼, ⅓), inak desatinné číslo. */
+    fun fmtSoft(amount: Double): String {
+        if (amount <= 0.0) return fmtNum(amount)
+        val whole = kotlin.math.floor(amount + 1e-6).toLong()
+        val frac = amount - whole
+        val glyph = when {
+            abs(frac) < 1e-3 -> ""
+            abs(frac - 0.25) < 1e-3 -> "¼"
+            abs(frac - 0.5) < 1e-3 -> "½"
+            abs(frac - 0.75) < 1e-3 -> "¾"
+            abs(frac - 1.0 / 3.0) < 1e-2 -> "⅓"
+            abs(frac - 2.0 / 3.0) < 1e-2 -> "⅔"
+            else -> null
+        } ?: return fmtNum(amount)
+        return if (whole == 0L) glyph.ifEmpty { "0" } else "$whole$glyph"
+    }
+
+    /** Zaokrúhlenie škálovanej mäkkej miery: pod 1 na štvrtiny (najmenej ¼), do 10 na polovice, vyššie na celé. */
+    fun roundSoft(amount: Double): Double = when {
+        amount <= 0.0 -> 0.0
+        amount < 1.0 - 1e-9 -> (round(amount * 4.0) / 4.0).coerceAtLeast(0.25)
+        amount < 10.0 - 1e-9 -> round(amount * 2.0) / 2.0
+        else -> round(amount)
+    }
+
     private val UNIT_RE = UNIT_ALIASES.keys.joinToString("|") { Regex.escape(it) }
 
     private val TAIL_UNIT = Regex(
@@ -324,6 +409,7 @@ object Meals {
 
     fun formatQty(amount: Double, unit: String): String {
         fuzzyLabel(unit)?.let { return it }
+        softLabel(unit)?.let { return "${fmtSoft(amount)} ${softWord(it, amount)}" }
         val u = canonicalUnit(unit)
         return "${fmtNum(amount)} $u"
     }
@@ -331,6 +417,8 @@ object Meals {
     fun formatShop(name: String, amount: Double, unit: String): String {
         val n = name.trim()
         if (n.isEmpty()) return formatQty(amount, unit)
+        // do nákupného zoznamu ide len názov: strúčiky či lyžice sa nekupujú (cesnak kúpiš celý)
+        if (isSoft(unit)) return n
         return "$n ${formatQty(amount, unit)}"
     }
 
@@ -341,7 +429,8 @@ object Meals {
         return s.replace('.', ',')
     }
 
-    fun canonicalUnit(unit: String): String = UNIT_ALIASES[unit.trim().lowercase()] ?: unit.trim().ifBlank { "ks" }
+    fun canonicalUnit(unit: String): String =
+        UNIT_ALIASES[unit.trim().lowercase()] ?: softLabel(unit) ?: unit.trim().ifBlank { "ks" }
 
     /** ks, g, kg, ml, l — pri chýbajúcej zásobe idú rovno do nákupu; iné jednotky (hlavička, lyžica) do Overiť. */
     fun isKnownUnit(unit: String): Boolean = !isFuzzy(unit) && unit.trim().lowercase() in UNIT_ALIASES
@@ -352,6 +441,7 @@ object Meals {
 
     fun family(unit: String): String {
         fuzzyLabel(unit)?.let { return "fuzzy:$it" }
+        softLabel(unit)?.let { return "soft:$it" }
         return when (canonicalUnit(unit)) {
             "g", "kg" -> "g"
             "ml", "l" -> "ml"
@@ -391,9 +481,11 @@ object Meals {
         return toBase(haveA, haveU) + 1e-6 >= toBase(needA, needU)
     }
 
-    fun pretty(base: Double, family: String): Qty = when (family) {
-        "g" -> if (base >= 1000.0 - 1e-6) Qty(base / 1000.0, "kg") else Qty(base, "g")
-        "ml" -> if (base >= 1000.0 - 1e-6) Qty(base / 1000.0, "l") else Qty(base, "ml")
+    fun pretty(base: Double, family: String): Qty = when {
+        family == "g" -> if (base >= 1000.0 - 1e-6) Qty(base / 1000.0, "kg") else Qty(base, "g")
+        family == "ml" -> if (base >= 1000.0 - 1e-6) Qty(base / 1000.0, "l") else Qty(base, "ml")
+        family.startsWith("soft:") -> Qty(base, family.removePrefix("soft:"))
+        family.startsWith("fuzzy:") -> Qty(base, family.removePrefix("fuzzy:"))
         else -> Qty(base, "ks")
     }
 
@@ -421,6 +513,7 @@ object Meals {
         if (isFuzzy(unit)) return Qty(amount, fuzzyLabel(unit) ?: unit)
         val used = usedPortions.coerceAtLeast(1)
         val base = basePortions.coerceAtLeast(1)
+        softLabel(unit)?.let { return if (used == base) Qty(amount, it) else Qty(roundSoft(amount * used.toDouble() / base), it) }
         if (used == base) return Qty(amount, if (unit.trim().lowercase() in UNIT_ALIASES) canonicalUnit(unit) else unit)
         val raw = amount * used.toDouble() / base
         return roundScaled(raw, unit)
@@ -428,6 +521,7 @@ object Meals {
 
     fun roundScaled(amount: Double, unit: String): Qty {
         if (isFuzzy(unit)) return Qty(amount, fuzzyLabel(unit) ?: unit)
+        softLabel(unit)?.let { return Qty(roundSoft(amount), it) }
         val fam = family(unit)
         if (fam.startsWith("fuzzy:")) return Qty(amount, unit)
         if (fam != "g" && fam != "ml") {
@@ -470,6 +564,19 @@ object Meals {
             .filter { it.isNotEmpty() }
         if (parts.isEmpty()) return false
         return parts.all { it in STAPLE_KEYS }
+    }
+
+    /** Základné dochucovadlá: lyžica „olivového oleja“, „korenia na cestoviny“ či „morskej soli“ sa berie ako vždy doma. */
+    private val SEASONING_WORDS = setOf("sol", "olej", "korenie")
+
+    /**
+     * Suroviny, ktoré sa nenakupujú ani neodpočítavajú: [isStaple], a pri mäkkej miere (PL, ČL, hrsť…) aj akýkoľvek druh
+     * soli, oleja a korenia („Olej olivový“, „Korenie na cestoviny“).
+     */
+    fun isHomeBasic(name: String, unit: String): Boolean {
+        if (isStaple(name)) return true
+        if (!isSoft(unit)) return false
+        return fold(name).replace(NON_ALNUM, " ").trim().split(' ').any { it in SEASONING_WORDS }
     }
 
     /** Množstvo v základnej jednotke rodiny [target] (g / ml / ks); ks ↔ g cez hmotnosť kusu, inak null. */
@@ -552,7 +659,7 @@ object Meals {
     ): List<PantryItem> {
         var next = pantry
         for (ing in scaledIngredients(recipe, portions)) {
-            if (isFuzzy(ing.unit) || isStaple(ing.name)) continue
+            if (isFuzzy(ing.unit) || isHomeBasic(ing.name, ing.unit)) continue
             val k = key(ing.name)
             val hit = next.firstOrNull { !it.deleted && key(it.name) == k } ?: continue
             if (hit.always) continue
@@ -632,11 +739,16 @@ object Meals {
             val sig = sig(meal, recipe)
             for (ing in scaledIngredients(recipe, portionsOf(meal, recipe))) {
                 if (ing.name.isBlank() || isFuzzy(ing.unit)) continue
-                val k = key(ing.name) + ":" + family(ing.unit)
+                val soft = isSoft(ing.unit)
+                // mäkké miery jednej suroviny sa berú ako jedna potreba (strúčiky + hrsť cesnaku nemá zmysel sčítať ani deliť)
+                val k = key(ing.name) + ":" + if (soft) "soft" else family(ing.unit)
                 val part = Part(meal.id, sig, toBase(ing.amount, ing.unit))
                 val cur = acc[k]
                 if (cur == null) {
                     acc[k] = Acc(ing.amount, ing.unit, mutableListOf(source), ing.name, mutableListOf(part))
+                } else if (soft && !canMerge(cur.unit, ing.unit)) {
+                    if (source !in cur.sources) cur.sources += source
+                    cur.parts += part
                 } else if (canMerge(cur.unit, ing.unit)) {
                     val sum = sumQty(cur.amount, cur.unit, ing.amount, ing.unit)
                     cur.amount = sum.amount
@@ -685,10 +797,11 @@ object Meals {
         }
         val out = ArrayList<ShopNeed>()
         for (line in neededForRange(from, to, meals, recipes)) {
-            if (isStaple(line.name)) continue
+            if (isHomeBasic(line.name, line.unit)) continue
             val k = key(line.name)
             val item = stock.firstOrNull { key(it.name) == k }
             if (item?.always == true) continue
+            if (item != null && isSoft(line.unit) && softCovered(item, line.amount, line.unit)) continue
             var kind: NeedKind
             var qty = nice(Qty(line.amount, line.unit))
             if (item == null) {
@@ -745,7 +858,7 @@ object Meals {
             if (n.isEmpty() || isFuzzy(unit)) return
             val k = key(n)
             if (k.isEmpty()) return
-            val u = if (unit.trim().lowercase() in UNIT_ALIASES) canonicalUnit(unit) else "ks"
+            val u = softLabel(unit) ?: if (unit.trim().lowercase() in UNIT_ALIASES) canonicalUnit(unit) else "ks"
             val acc = byKey.getOrPut(k) { Acc(n, LinkedHashMap(), 0) }
             acc.units[u] = (acc.units[u] ?: 0) + weight
             acc.uses += weight
@@ -775,8 +888,19 @@ object Meals {
 
     /** Stačí zásoba [item] na [amount] [unit]? null = nedá sa porovnať (g ↔ ks bez známej hmotnosti kusu). */
     fun covers(item: PantryItem, amount: Double, unit: String): Boolean? {
+        if (isSoft(unit)) return softCovered(item, amount, unit)
         val have = stockBaseFor(item, unit) ?: return null
         return have + 1e-6 >= toBase(amount, unit)
+    }
+
+    /**
+     * Mäkká miera (strúčik, lyžica, hrsť…) sa v zásobách presne porovnať nedá: ak má zásoba rovnakú mäkkú jednotku, porovná sa
+     * množstvo, inak stačí, že surovina v zásobách je (a niečo z nej zostalo) alebo je „vždy doma“.
+     */
+    private fun softCovered(item: PantryItem, amount: Double, unit: String): Boolean {
+        if (item.always) return true
+        if (family(item.unit) == family(unit)) return toBase(item.amount, item.unit) + 1e-6 >= amount
+        return item.amount > 1e-9
     }
 
     /** Krátky text do oznámenia: „Chýba: múka 500 g, mlieko 1 l (+2)“. */

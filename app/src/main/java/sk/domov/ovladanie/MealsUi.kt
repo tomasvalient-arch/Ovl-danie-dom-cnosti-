@@ -752,7 +752,7 @@ private fun RecipeDetail(
     data class Row(val ing: Meals.Ingredient, val have: Boolean, val note: String)
     val fuzzy = scaled.filter { Meals.isFuzzy(it.unit) }
     val rows = scaled.filter { !Meals.isFuzzy(it.unit) }.map { ing ->
-        if (Meals.isStaple(ing.name)) return@map Row(ing, true, "vždy doma")
+        if (Meals.isHomeBasic(ing.name, ing.unit)) return@map Row(ing, true, "vždy doma")
         val stock = pantry.firstOrNull { Meals.key(it.name) == Meals.key(ing.name) }
         when {
             stock?.always == true -> Row(ing, true, "vždy doma")
@@ -958,9 +958,29 @@ private fun RecipeEditor(
                         }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                        (listOf("ks", "g", "kg", "ml", "l") + Meals.FUZZY_UNITS).forEach { u ->
-                            val selected = if (Meals.isFuzzy(u)) Meals.fuzzyLabel(ing.unit) == u else !Meals.isFuzzy(ing.unit) && Meals.canonicalUnit(ing.unit) == u
-                            FilterChip(selected = selected, onClick = { ings = ings.toMutableList().also { it[i] = ing.copy(unit = u, amount = if (Meals.isFuzzy(u)) 0.0 else if (ing.amount > 0.0) ing.amount else 1.0) } }, label = { Text(u) })
+                        val curSoft = Meals.softLabel(ing.unit)
+                        // bežné mäkké miery sú vždy v ponuke, ostatné (konzerva, kocka…) len keď ich recept už používa
+                        val chips = listOf("ks", "g", "kg", "ml", "l") + Meals.COMMON_SOFT + listOfNotNull(curSoft?.takeIf { it !in Meals.COMMON_SOFT }) + Meals.FUZZY_UNITS
+                        chips.forEach { u ->
+                            val selected = when {
+                                Meals.isFuzzy(u) -> Meals.fuzzyLabel(ing.unit) == u
+                                Meals.isSoft(u) -> curSoft == u
+                                else -> !Meals.isFuzzy(ing.unit) && curSoft == null && Meals.canonicalUnit(ing.unit) == u
+                            }
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    // pri prechode medzi g/ml, kusmi a mäkkou mierou sa množstvo vráti na 1 (500 g ≠ 500 strúčikov)
+                                    val amount = when {
+                                        Meals.isFuzzy(u) -> 0.0
+                                        ing.amount <= 0.0 -> 1.0
+                                        Meals.family(ing.unit) != Meals.family(u) && (Meals.isSoft(u) || Meals.isSoft(ing.unit)) -> 1.0
+                                        else -> ing.amount
+                                    }
+                                    ings = ings.toMutableList().also { it[i] = ing.copy(unit = u, amount = amount) }
+                                },
+                                label = { Text(u) },
+                            )
                         }
                     }
                 }
@@ -1437,7 +1457,7 @@ private fun FillShopSheet(
             if (missing.isNotEmpty()) NeedSection("Chýba · ${missing.size}", missing, checked, toggle, toggleable = true)
             if (topup.isNotEmpty()) NeedSection("Zvýšiť množstvo · ${topup.size}", topup, checked, toggle, toggleable = true, caption = { it.note })
             if (stale.isNotEmpty()) NeedSection("Už netreba · ${stale.size}", stale, checked, toggle, toggleable = true, caption = { it.note })
-            if (ask.isNotEmpty()) NeedSection("Overiť · ${ask.size}", ask, checked, toggle, toggleable = true, caption = { "Nie je v zásobách alebo nesedí jednotka · odškrtni, ak to máš doma" })
+            if (ask.isNotEmpty()) NeedSection("Overiť · ${ask.size}", ask, checked, toggle, toggleable = true, caption = { if (Meals.isSoft(it.unit)) "Nie je v zásobách · odškrtni, ak to máš doma" else "Nie je v zásobách alebo nesedí jednotka · odškrtni, ak to máš doma" })
             if (already.isNotEmpty()) NeedSection("Už v zozname", already, emptyMap(), { _, _ -> }, toggleable = false, caption = { "Už v zozname" })
             MealsCta(
                 when {
@@ -1480,7 +1500,7 @@ private fun NeedSection(
                 }
                 Column(Modifier.weight(1f)) {
                     Text(
-                        n.shopText(),
+                        n.displayText(),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                         textDecoration = if (n.kind == Meals.NeedKind.STALE && n.newText.isEmpty()) TextDecoration.LineThrough else null,

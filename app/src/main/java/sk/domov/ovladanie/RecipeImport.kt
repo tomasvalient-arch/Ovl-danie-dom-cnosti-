@@ -12,8 +12,9 @@ import org.json.JSONObject
  * číslovanie („1. 2 cibule“), množstvo na samostatnom riadku (pred názvom aj za ním), zoznam v jednom riadku
  * („Suroviny: 500 g múky, 3 vajcia, …“) a nadpisy sekcií („Na cesto“, „Na plnku:“), ktoré preskočí.
  *
- * Jednotky: g, dag, kg, ml, cl, dl, l, ks. Lyžice, strúčiky, hrste, balenia a podobné miery idú ako neurčité množstvo
- * („trocha“): nejdú do nákupu ani sa neodpočítavajú (rovnako ako štipka v recepte).
+ * Jednotky: g, dag, kg, ml, cl, dl, l, ks. Mäkké miery (strúčik, PL/ČL = polievková/čajová lyžica, hrsť, hrnček, balenie,
+ * plechovka…) sa zachovajú aj s množstvom („2 strúčiky“), len sa neprepočítavajú na g/ml (pozri [Meals.SOFT_UNITS]).
+ * Naozaj neurčité („štipka“, „trocha“, „podľa chuti“) idú ako neurčité množstvo bez čísla.
  */
 object RecipeImport {
     /** [skipped] = riadky v časti so surovinami, ktorým appka nerozumela (náhľad ich ukáže, aby sa nič nestratilo potichu). */
@@ -73,19 +74,48 @@ object RecipeImport {
         "ks" to ("ks" to 1.0), "kus" to ("ks" to 1.0), "kusy" to ("ks" to 1.0), "kusov" to ("ks" to 1.0), "kusa" to ("ks" to 1.0),
     )
 
-    private val FUZZY_TOKENS = setOf("pl", "kl", "bal", "kocka", "kocky", "kocku", "trocha", "trochu")
+    /** Skutočne neurčité množstvo (bez čísla): zobrazí sa len ako „trocha“, neškáluje sa a nejde do nákupu. */
+    private val FUZZY_TOKENS = setOf("trocha", "trochu")
 
-    /** Začiatky slov (po skloňovaní): lyžica/lyžice/lyžíc, strúčik, hrsť, štipka, balenie, plechovka, konzerva, pohár, hrnček, šálka, lupienok, kúsok. */
-    private val FUZZY_STEMS = listOf(
-        "lyzic", "strucik", "struck", "hrst", "stipk", "balen", "plechovk", "konzerv", "pohar", "hrncek", "salk", "lupienok", "kusok", "kuskov",
-    )
+    private val FUZZY_STEMS = listOf("stipk", "lupienok")
 
     private fun isFuzzyToken(f: String) = f in FUZZY_TOKENS || FUZZY_STEMS.any { f.startsWith(it) }
 
-    /** Slovo je známa jednotka (metrická, ks alebo neurčitá miera). [raw] kvôli „čl“ (čajová lyžička), ktoré sa po zjednodušení zhoduje s „cl“. */
+    /** Mäkké miery podľa celého slova (zjednodušený tvar): skratky a slová, ktoré sa dajú zameniť s inými (kúsok vs. kuskus, hlávkový šalát). */
+    private val SOFT_EXACT = mapOf(
+        "pl" to "PL", "kl" to "ČL", "bal" to "balenie",
+        "kocka" to "kocka", "kocky" to "kocka", "kocku" to "kocka", "kociek" to "kocka",
+        "hlavka" to "hlávka", "hlavky" to "hlávka", "hlavku" to "hlávka", "hlaviek" to "hlávka",
+        "hlavicka" to "hlávka", "hlavicky" to "hlávka", "hlavicku" to "hlávka", "hlaviciek" to "hlávka",
+        "kusok" to "kúsok", "kusky" to "kúsok", "kuskov" to "kúsok", "kuska" to "kúsok", "kusku" to "kúsok",
+        "salok" to "šálka",
+    )
+
+    /** Začiatky slov (po skloňovaní). Poradie je dôležité: lyžička (lyzick…, lyzici…) pred lyžicou (lyzic…). */
+    private val SOFT_STEMS = listOf(
+        "strucik" to "strúčik", "struck" to "strúčik",
+        "lyzick" to "ČL", "lyzici" to "ČL", "lyzic" to "PL",
+        "hrst" to "hrsť", "hrncek" to "hrnček", "hrnck" to "hrnček",
+        "balen" to "balenie", "plechovk" to "plechovka", "konzerv" to "konzerva",
+        "pohar" to "pohár", "salk" to "šálka",
+    )
+
+    /** Kanonická mäkká miera pre slovo z receptu („strúčiky“ → strúčik, „PL“, „lyžička“ → ČL), inak null. „cl“ je centilitre, „čl“ čajová lyžička. */
+    private fun softUnit(raw: String): String? {
+        val t = raw.trim().trimEnd('.', ',', ':')
+        if (t.lowercase() == "čl") return "ČL"
+        val f = fold(t)
+        if (f == "cl") return null
+        SOFT_EXACT[f]?.let { return it }
+        return SOFT_STEMS.firstOrNull { f.startsWith(it.first) }?.second
+    }
+
+    private fun isSoftToken(raw: String) = softUnit(raw) != null
+
+    /** Slovo je známa jednotka (metrická, ks, mäkká alebo neurčitá miera). [raw] kvôli „čl“ (čajová lyžička), ktoré sa po zjednodušení zhoduje s „cl“. */
     private fun isUnitToken(raw: String): Boolean {
         val f = fold(raw.trimEnd('.', ',', ':'))
-        if (raw.trimEnd('.').lowercase() == "čl") return true
+        if (isSoftToken(raw)) return true
         return (f in METRIC && !(f == "cl" && raw.lowercase().startsWith("č"))) || isFuzzyToken(f)
     }
 
@@ -122,6 +152,11 @@ object RecipeImport {
             .replace(Regex("<[^>]+>"), " ")
             .replace("&nbsp;", " ").replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
             .replace(Regex("\\s+"), " ").trim()
+            .replace(SPOON_PL, "PL").replace(SPOON_CL, "ČL")
+
+    /** „polievková lyžica“ → PL, „čajová / kávová / dezertná lyžička“ → ČL (kvôli jednotnému zápisu miery). */
+    private val SPOON_PL = Regex("(?iu)(?<![\\p{L}\\p{N}])polievkov\\p{L}*\\s+ly[žz]\\p{L}*")
+    private val SPOON_CL = Regex("(?iu)(?<![\\p{L}\\p{N}])(?:[čc]ajov|k[áa]vov|dezertn)\\p{L}*\\s+ly[žz]\\p{L}*")
 
     // ── slovenské 2. pád → 1. pád názvu („500 g múky“ → Múka), aby sa surovina zhodla so zásobami a nákupom ────────
 
@@ -147,7 +182,7 @@ object RecipeImport {
             "pretlaku" to ("pretlak" to 'M'), "vývaru" to ("vývar" to 'M'), "jogurtu" to ("jogurt" to 'M'), "tvarohu" to ("tvaroh" to 'M'),
             "prášku" to ("prášok" to 'M'), "škrobu" to ("škrob" to 'M'), "medu" to ("med" to 'M'), "rumu" to ("rum" to 'M'), "cesnaku" to ("cesnak" to 'M'),
             "hrášku" to ("hrášok" to 'M'), "špenátu" to ("špenát" to 'M'), "zelera" to ("zeler" to 'M'), "kôpru" to ("kôpor" to 'M'),
-            "zázvoru" to ("zázvor" to 'M'), "kvasu" to ("kvas" to 'M'), "kakaového" to ("kakaový" to 'M'), "olivového" to ("olivový" to 'M'),
+            "zázvoru" to ("zázvor" to 'M'), "bujónu" to ("bujón" to 'M'), "zeleninového" to ("zeleninový" to 'M'), "zeleninovej" to ("zeleninová" to 'F'), "kvasu" to ("kvas" to 'M'), "kakaového" to ("kakaový" to 'M'), "olivového" to ("olivový" to 'M'),
             "rastlinného" to ("rastlinný" to 'M'), "slnečnicového" to ("slnečnicový" to 'M'), "bieleho" to ("biely" to 'M'), "čierneho" to ("čierny" to 'M'),
             "červeného" to ("červený" to 'M'), "sladkého" to ("sladký" to 'M'), "grilovacieho" to ("grilovacie" to 'N'), "kyslého" to ("kyslý" to 'M'),
             "bazalkového" to ("bazalkový" to 'M'), "citrónovej" to ("citrónová" to 'F'), "vlašského" to ("vlašský" to 'M'),
@@ -221,10 +256,12 @@ object RecipeImport {
         if (amount <= 0.0) return null
         val firstFold = fold(unitRaw.trimEnd('.', ',', ':'))
         val metric = METRIC[firstFold]?.takeUnless { firstFold == "cl" && unitRaw.lowercase().startsWith("č") }
-        val fuzzy = unitRaw.trimEnd('.').lowercase() == "čl" || isFuzzyToken(firstFold)
+        val soft = softUnit(unitRaw)
+        val fuzzy = soft == null && isFuzzyToken(firstFold)
         val name = cleanName(nameRaw, known)
         if (name.isEmpty()) return null
         return when {
+            soft != null -> Meals.Ingredient(name, amount, soft)
             fuzzy -> Meals.Ingredient(name, 0.0, "trocha")
             metric != null -> Meals.Ingredient(name, amount * metric.second, metric.first)
             else -> null
@@ -421,7 +458,7 @@ object RecipeImport {
         if (t.isEmpty()) return null
         if (allowBare && BARE_NUMBER.matchEntire(t) != null) return QtyLine("$t ks", "")
         // samotná neurčitá miera bez čísla: „hrsť“, „štipka“
-        if (!t.contains(' ') && !t.any { it.isDigit() } && isFuzzyToken(fold(t))) return QtyLine("1 $t", "")
+        if (!t.contains(' ') && !t.any { it.isDigit() } && (isFuzzyToken(fold(t)) || isSoftToken(t))) return QtyLine("1 $t", "")
         val m = QTY_ONLY.matchEntire(t) ?: return null
         val unit = m.groupValues[2]
         if (!isUnitToken(unit)) return null

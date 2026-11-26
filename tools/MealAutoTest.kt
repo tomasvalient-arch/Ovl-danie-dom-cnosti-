@@ -238,7 +238,7 @@ fun main() {
     check("import: porcie 4", imp.portions == 4)
     check("import: 500 g zemiakov", imp.ingredients.any { it.name == "Zemiaky" && eq(it.amount, 500.0) && it.unit == "g" })
     check("import: vajce 1 ks", imp.ingredients.any { Meals.key(it.name) == Meals.key("vajce") && eq(it.amount, 1.0) && it.unit == "ks" })
-    check("import: 2 PL oleja je neurčité množstvo", imp.ingredients.any { it.name == "Olej" && Meals.isFuzzy(it.unit) })
+    check("import: 2 PL oleja ostane 2 PL", imp.ingredients.any { it.name == "Olej" && eq(it.amount, 2.0) && it.unit == "PL" })
     check("import: štipka soli", imp.ingredients.any { it.name == "Soľ" && Meals.isFuzzy(it.unit) })
     check("import: samostatná „Soľ“ v sekcii surovín", imp.ingredients.any { it.name == "Soľ" && Meals.isFuzzy(it.unit) })
     check("import: postup sa neberie", imp.ingredients.size == 8 && imp.ingredients.none { it.name.startsWith("Zemiaky nastr") })
@@ -246,7 +246,7 @@ fun main() {
     check("import: porcie z názvu", imp2.portions == 6)
     check("import: dl → ml a známy názov", imp2.ingredients.any { it.name == "Mlieko" && eq(it.amount, 200.0) && it.unit == "ml" })
     check("import: zlomok 1/2 l", imp2.ingredients.any { it.name == "Voda" && eq(it.amount, 0.5) && it.unit == "l" })
-    check("import: hrnček je neurčité množstvo", imp2.ingredients.any { it.name == "Múka" && Meals.isFuzzy(it.unit) })
+    check("import: 1 1/2 hrnčeka múky", imp2.ingredients.any { it.name == "Múka" && eq(it.amount, 1.5) && it.unit == "hrnček" })
     check("import: rozsah 2–3 berie väčšie", imp2.ingredients.any { it.name == "Vajcia" && eq(it.amount, 3.0) && it.unit == "ks" })
     check("import: dag → g, známe Maslo", imp2.ingredients.any { it.name == "Maslo" && eq(it.amount, 50.0) && it.unit == "g" })
     check("import: ½ kg", imp2.ingredients.any { it.name == "Jahody" && eq(it.amount, 0.5) && it.unit == "kg" })
@@ -259,7 +259,7 @@ fun main() {
     val html = """<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage"},{"@type":["Recipe"],"name":"kapustnica","recipeYield":["6","6 porcií"],"recipeIngredient":["500&nbsp;g kyslej kapusty","2 ks cibule","1 lyžica rascy","soľ"]}]}</script></head></html>"""
     val web = RecipeImport.fromHtml(html)!!
     check("import zo stránky: názov a porcie", web.title == "Kapustnica" && web.portions == 6)
-    check("import zo stránky: suroviny", web.ingredients.size == 4 && web.ingredients[0].unit == "g" && eq(web.ingredients[0].amount, 500.0) && web.ingredients[2].let { Meals.isFuzzy(it.unit) })
+    check("import zo stránky: suroviny", web.ingredients.size == 4 && web.ingredients[0].unit == "g" && eq(web.ingredients[0].amount, 500.0) && web.ingredients[2].let { eq(it.amount, 1.0) && it.unit == "PL" })
     check("stránka bez receptu = null", RecipeImport.fromHtml("<html>nič</html>") == null)
 
     // ── plánovač ─────────────────────────────────────────────────────────────

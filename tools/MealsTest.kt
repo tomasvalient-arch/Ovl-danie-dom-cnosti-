@@ -352,6 +352,72 @@ fun main() {
 
     check("text porcií: 1 porciu, 2 porcie, 10 porcií", Meals.portionsText(1) == "1 porciu" && Meals.portionsText(2) == "2 porcie" && Meals.portionsText(10) == "10 porcií")
 
+    // ── mäkké miery: strúčik, PL, ČL, hrsť… ─────────────────────────────────────
+    check("soft: rozpoznanie tvarov", Meals.softLabel("strúčiky") == "strúčik" && Meals.softLabel("strucikov") == "strúčik" && Meals.softLabel("PL") == "PL" &&
+        Meals.softLabel("ČL") == "ČL" && Meals.softLabel("hrste") == "hrsť" && Meals.softLabel("hrnčeka") == "hrnček")
+    check("soft: cl je centilitre, ks a g nie sú mäkké", Meals.softLabel("cl") == null && Meals.softLabel("ks") == null && Meals.softLabel("g") == null && Meals.canonicalUnit("cl") == "ml")
+    check("soft: neurčité miery ostávajú neurčité", !Meals.isSoft("štipka") && !Meals.isSoft("trocha") && !Meals.isSoft("podľa chuti") && Meals.isFuzzy("štipka"))
+    check("soft: kanonická jednotka", Meals.canonicalUnit("strúčiky") == "strúčik" && Meals.canonicalUnit("PL") == "PL")
+    check("soft: skloňovanie", Meals.formatQty(1.0, "strúčik") == "1 strúčik" && Meals.formatQty(2.0, "strúčik") == "2 strúčiky" && Meals.formatQty(5.0, "strúčik") == "5 strúčikov" &&
+        Meals.formatQty(1.5, "strúčik") == "1½ strúčika" && Meals.formatQty(0.5, "hrnček") == "½ hrnčeka" && Meals.formatQty(2.0, "hrnček") == "2 hrnčeky")
+    check("soft: skratky PL/ČL sa neskloňujú, zlomky", Meals.formatQty(1.0, "PL") == "1 PL" && Meals.formatQty(3.0, "PL") == "3 PL" && Meals.formatQty(0.5, "ČL") == "½ ČL" && Meals.formatQty(0.25, "ČL") == "¼ ČL" && Meals.formatQty(2.5, "PL") == "2½ PL")
+    check("soft: desatinné číslo mimo zlomkov", Meals.formatQty(1.3, "strúčik") == "1,3 strúčika")
+    check("soft: do zoznamu ide len názov", Meals.formatShop("Cesnak", 2.0, "strúčik") == "Cesnak" && Meals.Ingredient("Cesnak", 2.0, "strúčik").shopText() == "Cesnak" && Meals.formatShop("Múka", 500.0, "g") == "Múka 500 g")
+
+    check("soft: nezlučiteľné s ks ani s inou mäkkou mierou", !Meals.canMerge("strúčik", "ks") && !Meals.canMerge("PL", "ČL") && Meals.canMerge("strúčik", "strúčiky") && !Meals.canMerge("strúčik", "g"))
+    val sumSoft = Meals.sumQty(2.0, "strúčik", 3.0, "strúčiky")
+    check("soft: súčet zachová jednotku", qtyEq(sumSoft.amount, 5.0) && sumSoft.unit == "strúčik")
+    val mergedSoft = Meals.mergeIngredients(listOf(Meals.Ingredient("Cesnak", 2.0, "strúčik"), Meals.Ingredient("Cesnak", 1.0, "strúčik"), Meals.Ingredient("Cesnak", 1.0, "ks"), Meals.Ingredient("Soľ", 0.0, "štipka"), Meals.Ingredient("Soľ", 0.0, "štipka")))
+    check("soft: mergeIngredients – 3 strúčiky a 1 ks osobitne, štipky sa nestratia", mergedSoft.size == 3 && mergedSoft.any { it.unit == "strúčik" && qtyEq(it.amount, 3.0) } && mergedSoft.any { it.unit == "ks" } && mergedSoft.any { Meals.formatQty(it.amount, it.unit) == "štipka" })
+
+    check("soft: škálovanie 2 strúčiky z 2 na 4 porcie = 4", qtyEq(Meals.scaleQty(2.0, "strúčik", 4, 2).amount, 4.0) && Meals.scaleQty(2.0, "strúčik", 4, 2).unit == "strúčik")
+    check("soft: 1 strúčik zo 4 na 6 porcií = 1,5", qtyEq(Meals.scaleQty(1.0, "strúčik", 6, 4).amount, 1.5))
+    check("soft: ½ ČL zo 4 na 1 porciu = ¼ (nie nula)", qtyEq(Meals.scaleQty(0.5, "ČL", 1, 4).amount, 0.25))
+    check("soft: 1 PL zo 4 na 10 porcií = 2,5; 2 z 2 na 24 = 24", qtyEq(Meals.scaleQty(1.0, "PL", 10, 4).amount, 2.5) && qtyEq(Meals.scaleQty(2.0, "strúčik", 24, 2).amount, 24.0))
+    check("soft: rovnaké porcie nemenia množstvo", qtyEq(Meals.scaleQty(0.5, "ČL", 4, 4).amount, 0.5) && Meals.scaleQty(0.5, "ČL", 4, 4).unit == "ČL")
+
+    val rizoto = recipe("r-rizoto", "Ryža s hubami", 2,
+        Meals.Ingredient("Ryža", 150.0, "g"), Meals.Ingredient("Cesnak", 2.0, "strúčik"), Meals.Ingredient("Vňať koriandrová", 1.0, "hrsť"),
+        Meals.Ingredient("Olej olivový", 1.0, "ČL"), Meals.Ingredient("Soľ", 0.5, "ČL"))
+    val rizotoMeal = meal("2026-11-25", Meals.Slot.LUNCH, "r-rizoto", "Ryža s hubami", portions = 4)
+    val sc4 = Meals.scaledIngredients(rizoto, 4)
+    check("soft: scaledIngredients pre 4 porcie = 4 strúčiky, 2 hrste, 2 ČL oleja", sc4.any { it.name == "Cesnak" && qtyEq(it.amount, 4.0) && it.unit == "strúčik" } && sc4.any { it.name.startsWith("Vňať") && qtyEq(it.amount, 2.0) && it.unit == "hrsť" } && sc4.any { it.name == "Olej olivový" && qtyEq(it.amount, 2.0) && it.unit == "ČL" })
+
+    val planSoft = Meals.planShopping(wed, wed, listOf(rizotoMeal), listOf(rizoto), emptyList(), emptyList())
+    val garlic = planSoft.firstOrNull { it.name == "Cesnak" }
+    check("soft: cesnak bez zásoby ide do Overiť s množstvom z receptu", garlic != null && garlic.kind == Meals.NeedKind.ASK && qtyEq(garlic.amount, 4.0) && garlic.unit == "strúčik" && garlic.displayText() == "Cesnak 4 strúčiky")
+    check("soft: do zoznamu sa pridá len „Cesnak“", garlic!!.shopText() == "Cesnak")
+    check("soft: hrsť koriandra sa pýta, olej a soľ nie (vždy doma)", planSoft.any { it.name.startsWith("Vňať") && it.kind == Meals.NeedKind.ASK } && planSoft.none { it.name.startsWith("Olej") || it.name == "Soľ" })
+    check("soft: ryža sa dopočíta normálne", planSoft.any { it.name == "Ryža" && it.kind == Meals.NeedKind.MISSING && qtyEq(it.amount, 300.0) && it.unit == "g" })
+
+    val planHave = Meals.planShopping(wed, wed, listOf(rizotoMeal), listOf(rizoto), listOf(pantry("Cesnak", 1.0, "ks"), pantry("Vňať koriandrová", 1.0, "ks")), emptyList())
+    check("soft: cesnak v zásobách (aj 1 ks) stačí, nepýta sa", planHave.none { it.name == "Cesnak" || it.name.startsWith("Vňať") })
+    val planEmptyStock = Meals.planShopping(wed, wed, listOf(rizotoMeal), listOf(rizoto), listOf(pantry("Cesnak", 0.0, "ks")), emptyList())
+    check("soft: minutý cesnak (0 ks) sa pýta", planEmptyStock.any { it.name == "Cesnak" && it.kind == Meals.NeedKind.ASK })
+    val planAlways = Meals.planShopping(wed, wed, listOf(rizotoMeal), listOf(rizoto), listOf(pantry("Cesnak", 0.0, "ks", always = true)), emptyList())
+    check("soft: „vždy doma“ cesnak sa nepýta", planAlways.none { it.name == "Cesnak" })
+    val planListed = Meals.planShopping(wed, wed, listOf(rizotoMeal), listOf(rizoto), emptyList(), listOf(shop("Cesnak")))
+    check("soft: cesnak už na zozname = už v zozname", planListed.any { it.name == "Cesnak" && it.kind == Meals.NeedKind.ALREADY })
+
+    val gulas2 = recipe("r-gulas2", "Guláš", 4, Meals.Ingredient("Cesnak", 1.0, "strúčik"), Meals.Ingredient("Cesnak", 1.0, "hrsť"))
+    val gulasMeal = meal("2026-11-26", Meals.Slot.LUNCH, "r-gulas2", "Guláš", portions = 4)
+    val twoDays = Meals.planShopping(wed, wed.plusDays(1), listOf(rizotoMeal, gulasMeal), listOf(rizoto, gulas2), emptyList(), emptyList())
+    check("soft: cesnak z dvoch receptov je jeden riadok (4 + 1 strúčik), obe jedlá v zdrojoch", twoDays.count { it.name == "Cesnak" } == 1 && twoDays.first { it.name == "Cesnak" }.let { qtyEq(it.amount, 5.0) && it.unit == "strúčik" && it.sources.size == 2 })
+
+    val pantryGarlic = listOf(pantry("Cesnak", 1.0, "ks"), pantry("Soľ", 1.0, "ks"))
+    val afterSoft = Meals.deduct(pantryGarlic, rizoto, 4, 99L, "me")
+    check("soft: strúčiky sa z cesnaku v kusoch neodpočítavajú", qtyEq(afterSoft.first { it.name == "Cesnak" }.amount, 1.0) && afterSoft.first { it.name == "Cesnak" }.unit == "ks")
+    val afterSoft2 = Meals.deduct(listOf(pantry("Cesnak", 10.0, "strúčik")), rizoto, 4, 99L, "me")
+    check("soft: zásoba v rovnakej jednotke sa odpočíta (10 − 4 = 6)", qtyEq(afterSoft2.first { it.name == "Cesnak" }.amount, 6.0) && afterSoft2.first { it.name == "Cesnak" }.unit == "strúčik")
+    check("soft: covers – je v zásobách / minuté / vždy doma", Meals.covers(pantry("Cesnak", 1.0, "ks"), 2.0, "strúčik") == true && Meals.covers(pantry("Cesnak", 0.0, "ks"), 2.0, "strúčik") == false &&
+        Meals.covers(pantry("Cesnak", 0.0, "ks", always = true), 2.0, "strúčik") == true && Meals.covers(pantry("Cesnak", 1.0, "strúčik"), 2.0, "strúčik") == false)
+
+    val knownSoft = Meals.knownIngredients(listOf(recipe("r-k", "K", 2, Meals.Ingredient("Cesnak", 2.0, "strúčik"), Meals.Ingredient("Cesnak", 1.0, "strúčik"))), emptyList(), emptyList())
+    check("soft: návrh suroviny pri písaní ponúkne strúčik", knownSoft.any { it.name == "Cesnak" && it.unit == "strúčik" })
+
+    val rtRecipe = Meals.recipeFrom(Meals.recipeObj(rizoto))!!
+    check("soft: recept so strúčikmi prežije uloženie a synchronizáciu (JSON)", rtRecipe.ingredients.any { it.name == "Cesnak" && qtyEq(it.amount, 2.0) && it.unit == "strúčik" } && rtRecipe.ingredients.any { it.name == "Soľ" && qtyEq(it.amount, 0.5) && it.unit == "ČL" })
+    check("soft: lyžica olivového oleja či korenia je vždy doma, fľaša oleja nie", Meals.isHomeBasic("Olej olivový", "ČL") && Meals.isHomeBasic("Korenie na cestoviny", "PL") && Meals.isHomeBasic("Morská soľ", "hrsť") && !Meals.isHomeBasic("Olej olivový", "ml") && !Meals.isHomeBasic("Med", "PL"))
     println("MealsTest OK")
 }
 
