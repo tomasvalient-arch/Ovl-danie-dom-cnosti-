@@ -6,6 +6,7 @@ import android.content.Context
 object MealsStore {
     private const val KEY_SHOP_DAY = "shop_day"
     private const val KEY_PROMPT = "prompt_cooked"
+    private const val KEY_EATERS = "eaters"
     private const val KEY_LINKS = "links"
 
     private fun prefs(c: Context) = c.getSharedPreferences(Meals.PREFS, Context.MODE_PRIVATE)
@@ -146,6 +147,16 @@ object MealsStore {
     fun setShopDay(c: Context, day: Int) {
         prefs(c).edit().putInt(KEY_SHOP_DAY, day.coerceIn(0, 7)).apply()
     }
+
+    /** Ručne nastavený počet jedákov pre nové jedlá; 0 = podľa domácnosti. */
+    fun usualEaters(c: Context): Int = prefs(c).getInt(KEY_EATERS, 0).coerceIn(0, Meals.MAX_PORTIONS)
+
+    fun setUsualEaters(c: Context, n: Int) {
+        prefs(c).edit().putInt(KEY_EATERS, n.coerceIn(0, Meals.MAX_PORTIONS)).apply()
+    }
+
+    /** Porcie nového jedla z [recipe]: zvyčajný počet jedákov (nastavený alebo podľa domácnosti), inak porcie receptu. */
+    fun defaultPortions(c: Context, recipe: Meals.Recipe): Int = Meals.defaultPortions(recipe, usualEaters(c), people(c).size)
 
     /** Večerné oznámenie „Uvarené?“ (predvolene zapnuté). */
     fun promptEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_PROMPT, true)

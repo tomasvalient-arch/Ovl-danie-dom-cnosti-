@@ -301,5 +301,15 @@ fun main() {
     check("kopírovanie: obsadené miesto sa neprepíše", MealPlanner.copyWeek(lastMon, thisMon, prevWeek + mealOf("2026-11-29", Meals.Slot.LUNCH, "a"), wed).none { it.id == "m:2026-11-29:l" })
     check("jedlo bez receptu: nejde do nákupu", Meals.neededForRange(wed, wed.plusDays(30), listOf(MealPlanner.outMeal(wed, Meals.Slot.LUNCH)), all).isEmpty())
 
+    // ── porcie podľa domácnosti ──────────────────────────────────────────────
+    val r4 = rec("pr", "Guláš", 4)
+    check("porcie: jeden telefón bez členov → porcie receptu", Meals.defaultPortions(r4, 0, 1) == 4 && Meals.usualEaters(0, 1) == 0)
+    check("porcie: dvaja v domácnosti → 2", Meals.defaultPortions(r4, 0, 2) == 2)
+    check("porcie: ručne nastavené má prednosť pred domácnosťou", Meals.defaultPortions(r4, 3, 2) == 3 && Meals.defaultPortions(r4, 3, 1) == 3)
+    check("porcie: hranica 24", Meals.defaultPortions(r4, 99, 2) == 24 && Meals.defaultPortions(rec("x", "Veľký", 40), 0, 1) == 24)
+    check("porcie: recept s 0 porciami dá aspoň 1", Meals.defaultPortions(rec("y", "Nič", 0), 0, 1) == 1)
+    val mPr = mealOf("2026-11-26", Meals.Slot.DINNER, "pr", portions = Meals.defaultPortions(r4, 0, 2))
+    check("porcie: jedlo na 2 porcie počíta suroviny na polovicu receptu", Meals.scaledIngredients(rec("pr", "Guláš", 4, Meals.Ingredient("múka", 400.0, "g")), Meals.portionsOf(mPr, r4)).single().amount == 200.0)
+
     println("MealAutoTest OK")
 }

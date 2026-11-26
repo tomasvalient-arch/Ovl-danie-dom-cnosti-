@@ -236,6 +236,22 @@ object Meals {
         return p.coerceAtLeast(1)
     }
 
+    /**
+     * Pre koľko ľudí sa jedlá plánujú zvyčajne: ručne nastavený počet [usual] (0 = nenastavené), inak počet ľudí v domácnosti,
+     * ak sú aspoň dvaja (jeden telefón bez členov nevypovedá nič). 0 = nevieme, platia porcie receptu.
+     */
+    fun usualEaters(usual: Int, household: Int): Int = when {
+        usual > 0 -> usual.coerceAtMost(MAX_PORTIONS)
+        household >= 2 -> household.coerceAtMost(MAX_PORTIONS)
+        else -> 0
+    }
+
+    /** Porcie nového jedla v plánovači: zvyčajný počet jedákov, inak porcie receptu. */
+    fun defaultPortions(recipe: Recipe, usual: Int, household: Int): Int =
+        usualEaters(usual, household).takeIf { it > 0 } ?: recipe.portions.coerceIn(1, MAX_PORTIONS)
+
+    const val MAX_PORTIONS = 24
+
     /** „2 porcie“, „1 porciu“, „10 porcií“ — pre text „Recept je pre…“. */
     fun portionsText(n: Int): String {
         val count = n.coerceAtLeast(1)

@@ -108,6 +108,7 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
     var links by remember { mutableStateOf(MealsStore.links(context)) }
     var shopDay by remember { mutableStateOf(MealsStore.shopDay(context)) }
     var promptOn by remember { mutableStateOf(MealsStore.promptEnabled(context)) }
+    var eaters by remember { mutableStateOf(MealsStore.usualEaters(context)) }
     var importOpen by remember { mutableStateOf(false) }
     var suggestOpen by remember { mutableStateOf(false) }
 
@@ -121,6 +122,7 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
         links = MealsStore.links(context)
         shopDay = MealsStore.shopDay(context)
         promptOn = MealsStore.promptEnabled(context)
+        eaters = MealsStore.usualEaters(context)
         openMeal = openMeal?.let { id -> meals.firstOrNull { it.id == id.id } }
         openRecipe = openRecipe?.let { r -> recipes.firstOrNull { it.id == r.id } }
     }
@@ -151,6 +153,7 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
         Meals.knownIngredients(recipes, pantry, runCatching { ShoppingStore.history(context).map { it.name } }.getOrDefault(emptyList()))
     }
     val clipboard = LocalClipboardManager.current
+    val portionsFor: (Meals.Recipe) -> Int = { r -> Meals.defaultPortions(r, eaters, people.size) }
 
     /** Po uložení jedla do plánu: ak niečo chýba, ponúkne pridanie do nákupu (jedno ťuknutie = potvrdenie). */
     fun nudgeShopping(meal: Meals.Meal) {
@@ -346,6 +349,9 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
                     pending = pending,
                     promptOn = promptOn,
                     onPrompt = { MealsStore.setPromptEnabled(context, it); promptOn = it },
+                    eaters = eaters,
+                    household = people.size,
+                    onEaters = { MealsStore.setUsualEaters(context, it); eaters = MealsStore.usualEaters(context) },
                     onAnswer = { meal, yes ->
                         if (yes) {
                             if (MealsStore.markCooked(context, meal)) scope.launch { snackbar.showSnackbar("Odrátané zo zásob") }
@@ -411,6 +417,7 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
                     reload()
                     nudgeShopping(meal)
                 },
+                defaultPortions = portionsFor,
                 onOut = {
                     MealsStore.saveMeal(context, MealPlanner.outMeal(day, slot))
                     pickFor = null
@@ -469,7 +476,7 @@ internal fun MealsScreen(onBack: () -> Unit, startPantry: Boolean = false) {
                 suggestOpen = false
                 val toSave = list.mapNotNull { sg ->
                     val r = recipes.firstOrNull { it.id == sg.recipeId } ?: return@mapNotNull null
-                    Meals.Meal(Meals.mealId(sg.date.toString(), sg.slot), sg.date.toString(), sg.slot, recipeId = r.id, title = r.name, portions = 0)
+                    Meals.Meal(Meals.mealId(sg.date.toString(), sg.slot), sg.date.toString(), sg.slot, recipeId = r.id, title = r.name, portions = portionsFor(r))
                 }
                 MealsStore.saveMeals(context, toSave)
                 reload()
@@ -511,6 +518,9 @@ private fun WeekPage(
     pending: List<Meals.Meal>,
     promptOn: Boolean,
     onPrompt: (Boolean) -> Unit,
+    eaters: Int,
+    household: Int,
+    onEaters: (Int) -> Unit,
     onAnswer: (Meals.Meal, Boolean) -> Unit,
     onSuggest: () -> Unit,
     onCopyPrev: () -> Unit,
@@ -607,6 +617,25 @@ private fun WeekPage(
             verticalPadding = 4.dp,
             onChange = onPrompt,
         )
+        val shown = Meals.usualEaters(eaters, household)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Nové jedlá plánovať pre", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    when {
+                        eaters > 0 -> "Nastavené ručne · ${Meals.portionsText(eaters)}"
+                        shown > 0 -> "Podľa domácnosti · ${Meals.portionsText(shown)}"
+                        else -> "Podľa porcií receptu"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                )
+            }
+            Stepper(shown.toDouble(), "ks", format = { if (it < 1.0) "auto" else it.toInt().toString() }, onChange = { d -> onEaters((if (shown > 0) shown else 1) + d) })
+        }
+        if (eaters > 0) {
+            TextButton(onClick = { onEaters(0) }, modifier = Modifier.padding(horizontal = 0.dp)) { Text("Vrátiť na automatiku") }
+        }
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -1169,6 +1198,7 @@ private fun MealPickerSheet(
     onNew: () -> Unit,
     onEdit: (Meals.Recipe) -> Unit,
     onPick: (Meals.Recipe, List<String>, Int) -> Unit,
+    defaultPortions: (Meals.Recipe) -> Int,
     onOut: () -> Unit,
     onClear: (() -> Unit)?,
 ) {
@@ -1184,10 +1214,15 @@ private fun MealPickerSheet(
     var selected by remember { mutableStateOf(preselectId ?: current?.recipeId) }
     var cooks by remember { mutableStateOf(current?.cookIds ?: emptyList()) }
     var portions by remember {
+        val wanted = preselectId ?: current?.recipeId
+        val recipe = recipes.firstOrNull { it.id == wanted }
         mutableIntStateOf(
-            current?.portions?.takeIf { it > 0 && current.recipeId == (preselectId ?: current.recipeId) }
-                ?: recipes.firstOrNull { it.id == (preselectId ?: current?.recipeId) }?.portions
-                ?: 4,
+            when {
+                // to isté jedlo znova otvorené: ostáva, čo je v pláne (0 = porcie receptu)
+                current != null && current.recipeId == wanted -> Meals.portionsOf(current, recipe)
+                recipe != null -> defaultPortions(recipe)
+                else -> 4
+            },
         )
     }
     val rec = recipes.firstOrNull { it.id == selected }
@@ -1236,7 +1271,7 @@ private fun MealPickerSheet(
                                 .combinedClickable(
                                     onClick = {
                                         selected = r.id
-                                        if (current?.recipeId != r.id) portions = r.portions
+                                        if (current?.recipeId != r.id) portions = defaultPortions(r)
                                     },
                                     onLongClick = { afterHide { onEdit(r) } },
                                 )
