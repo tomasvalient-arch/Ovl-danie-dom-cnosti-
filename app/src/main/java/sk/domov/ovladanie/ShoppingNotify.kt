@@ -10,14 +10,19 @@ import android.content.Intent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /**
  * Upozornenie, keď iný člen domácnosti upraví spoločný nákupný zoznam (od 1.68.0): pridá, odškrtne, premenuje
  * alebo odstráni vec. Notifikácia je viditeľná aj na zamknutej obrazovke (celý text, nie „skrytý obsah“).
+ * Od 1.68.1: kým má človek spoločný zoznam otvorený, ukáže sa namiesto notifikácie malý banner priamo na obrazovke Nákup.
  *
  * Zmeny sa zbierajú, kým si ich človek neotvorí (alebo notifikáciu neodsunie): keď partner pridá päť vecí po jednej,
- * v notifikácii je všetkých päť, nie len posledná. Nič sa nehlási, keď má človek práve otvorený spoločný nákup,
- * ani pri prvom stiahnutí zoznamu po pripojení do domácnosti (to by bolo desiatky „pridaných“ vecí naraz).
+ * v notifikácii je všetkých päť, nie len posledná. Nič sa nehlási pri prvom stiahnutí zoznamu po pripojení do domácnosti
+ * (to by bolo desiatky „pridaných“ vecí naraz).
  */
 object ShoppingNotify {
     const val CHANNEL = "shopping_changes"
@@ -36,6 +41,14 @@ object ShoppingNotify {
     @Volatile var screenOpen: Boolean = false
 
     private val lock = Any()
+
+    private val liveFlow = MutableSharedFlow<List<ShopChange>>(extraBufferCapacity = 16, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /**
+     * Zmeny od druhého telefónu, kým má človek otvorený spoločný nákup: obrazovka z nich ukáže malý banner a podsvieti
+     * riadky (systémová notifikácia sa vtedy neposiela). Nič sa neukladá – zoznam sa obnoví sám.
+     */
+    val liveChanges: SharedFlow<List<ShopChange>> = liveFlow.asSharedFlow()
 
     private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -67,10 +80,13 @@ object ShoppingNotify {
      */
     fun onRemoteChanges(c: Context, changes: List<ShopChange>) {
         if (changes.isEmpty() || !enabled(c)) return
-        // človek zoznam práve pozerá: obrazovka sa obnoví sama, notifikácia by len rušila
-        if (appForeground && screenOpen) return
-        if (!NotificationManagerCompat.from(c).areNotificationsEnabled()) return
         val named = changes.map { withName(c, it) }
+        // človek zoznam práve pozerá: zoznam sa obnoví sám, stačí malý banner v appke (bez systémovej notifikácie)
+        if (appForeground && screenOpen) {
+            liveFlow.tryEmit(named)
+            return
+        }
+        if (!NotificationManagerCompat.from(c).areNotificationsEnabled()) return
         val now = System.currentTimeMillis()
         val all: List<ShopChange>
         synchronized(lock) {

@@ -2,7 +2,12 @@
 
 package sk.domov.ovladanie
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -88,6 +93,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Ikona košíka (obrys ako v návrhu). */
@@ -224,6 +230,27 @@ internal fun ShoppingScreen(onBack: () -> Unit, initialView: ShopView? = null) {
         onDispose { ShoppingNotify.screenOpen = false }
     }
 
+    // malý banner o zmene od druhého telefónu (len kým je spoločný zoznam otvorený; inak ide systémová notifikácia)
+    var banner by remember { mutableStateOf<List<ShopChange>>(emptyList()) }
+    var lastBanner by remember { mutableStateOf<List<ShopChange>>(emptyList()) }
+    var bannerTick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        ShoppingNotify.liveChanges.collect { fresh ->
+            val next = ShoppingChanges.accumulate(banner, fresh, System.currentTimeMillis())
+            banner = next
+            if (next.isNotEmpty()) lastBanner = next
+            bannerTick++
+        }
+    }
+    // každá ďalšia zmena predĺži zobrazenie; potom banner sám zmizne
+    LaunchedEffect(bannerTick) {
+        if (banner.isNotEmpty()) {
+            delay(4500)
+            banner = emptyList()
+        }
+    }
+    val hot = remember(banner) { ShoppingChanges.highlightKeys(banner) }
+
     val visibleKind = view.kind
     val visible = if (visibleKind == null) items else items.filter { it.list == visibleKind }
     val targetItems = items.filter { it.list == target }
@@ -297,6 +324,7 @@ internal fun ShoppingScreen(onBack: () -> Unit, initialView: ShopView? = null) {
             }
         },
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -337,6 +365,7 @@ internal fun ShoppingScreen(onBack: () -> Unit, initialView: ShopView? = null) {
                 ShopColumns(
                     items = items,
                     target = target,
+                    highlight = hot,
                     onOpen = { applyView(ShopView.of(it)) },
                     onToggle = { items = ShoppingStore.toggle(context, it.id) },
                     onMenu = { menuFor = it },
@@ -371,10 +400,10 @@ internal fun ShoppingScreen(onBack: () -> Unit, initialView: ShopView? = null) {
                 val live = rows.filter { !it.done }
                 val done = rows.filter { it.done }
                 if (live.isNotEmpty()) {
-                    ShopCard(live, showAuthor = view == ShopView.SHARED, showAvatar = view == ShopView.SHARED, onToggle = { items = ShoppingStore.toggle(context, it.id) }, onMenu = { menuFor = it }, onDelete = { delete(it) })
+                    ShopCard(live, highlight = hot, showAuthor = view == ShopView.SHARED, showAvatar = view == ShopView.SHARED, onToggle = { items = ShoppingStore.toggle(context, it.id) }, onMenu = { menuFor = it }, onDelete = { delete(it) })
                 }
                 if (done.isNotEmpty()) {
-                    ShopCard(done, showAuthor = view == ShopView.SHARED, showAvatar = view == ShopView.SHARED, onToggle = { items = ShoppingStore.toggle(context, it.id) }, onMenu = { menuFor = it }, onDelete = { delete(it) })
+                    ShopCard(done, highlight = hot, showAuthor = view == ShopView.SHARED, showAvatar = view == ShopView.SHARED, onToggle = { items = ShoppingStore.toggle(context, it.id) }, onMenu = { menuFor = it }, onDelete = { delete(it) })
                 }
                 Text(
                     if (view == ShopView.MINE) "Tieto veci vidíš len ty. Podrž položku, ak ju chceš presunúť do spoločného."
@@ -385,6 +414,15 @@ internal fun ShoppingScreen(onBack: () -> Unit, initialView: ShopView? = null) {
                 )
             }
             Spacer(Modifier.height(24.dp))
+        }
+        AnimatedVisibility(
+            visible = banner.isNotEmpty() && view != ShopView.MINE,
+            modifier = Modifier.align(Alignment.TopCenter).padding(padding).padding(horizontal = 12.dp, vertical = 8.dp),
+            enter = fadeIn() + slideInVertically { -it / 2 },
+            exit = fadeOut() + slideOutVertically { -it / 2 },
+        ) {
+            ShopChangeBanner(lastBanner)
+        }
         }
     }
 
@@ -452,6 +490,7 @@ private fun ShopTargetRow(target: ShopListKind, onSelect: (ShopListKind) -> Unit
 private fun ShopColumns(
     items: List<ShopItem>,
     target: ShopListKind,
+    highlight: Set<String> = emptySet(),
     onOpen: (ShopListKind) -> Unit,
     onToggle: (ShopItem) -> Unit,
     onMenu: (ShopItem) -> Unit,
@@ -497,6 +536,7 @@ private fun ShopColumns(
                                 showAuthor = kind == ShopListKind.SHARED,
                                 showAvatar = false,
                                 compact = true,
+                                hot = kind == ShopListKind.SHARED && ShoppingHistory.fold(item.name) in highlight,
                             )
                         }
                     }
@@ -509,6 +549,7 @@ private fun ShopColumns(
 @Composable
 private fun ShopCard(
     rows: List<ShopItem>,
+    highlight: Set<String>,
     showAuthor: Boolean,
     showAvatar: Boolean,
     onToggle: (ShopItem) -> Unit,
@@ -533,9 +574,42 @@ private fun ShopCard(
                             onEdit = { onMenu(item) },
                             showAuthor = showAuthor,
                             showAvatar = showAvatar,
+                            hot = ShoppingHistory.fold(item.name) in highlight,
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Malý banner nad zoznamom: kto a čo zmenil (viac zmien je v jednom riadku), na pár sekúnd. */
+@Composable
+private fun ShopChangeBanner(changes: List<ShopChange>) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = scheme.surfaceContainerHighest,
+        border = BorderStroke(1.dp, scheme.primary.copy(alpha = 0.55f)),
+        shadowElevation = 6.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(CartIcon, contentDescription = null, tint = scheme.primary, modifier = Modifier.size(22.dp))
+            Column(Modifier.weight(1f)) {
+                Text(ShoppingChanges.who(changes), style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    ShoppingChanges.summary(changes),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = scheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
@@ -774,12 +848,15 @@ private fun SwipeToDelete(onDelete: () -> Unit, content: @Composable () -> Unit)
 
 /** Jeden riadok zoznamu (min. 56 dp, celý je tlačidlo): krúžok + názov; kúpené je preškrtnuté a zosivené. Podržaním premenovanie. */
 @Composable
-private fun ShoppingItemRow(item: ShopItem, onToggle: () -> Unit, onEdit: () -> Unit, showAuthor: Boolean = true, showAvatar: Boolean = false, compact: Boolean = false) {
+private fun ShoppingItemRow(item: ShopItem, onToggle: () -> Unit, onEdit: () -> Unit, showAuthor: Boolean = true, showAvatar: Boolean = false, compact: Boolean = false, hot: Boolean = false) {
     val scheme = MaterialTheme.colorScheme
+    // riadok, ktorý práve zmenil druhý telefón, sa na pár sekúnd jemne podsvieti
+    val tint by animateColorAsState(scheme.primary.copy(alpha = if (hot) 0.2f else 0f), label = "shopHot")
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
+            .background(tint)
             .combinedClickable(
                 role = Role.Checkbox,
                 onClickLabel = if (item.done) "Vrátiť medzi nekúpené" else "Označiť ako kúpené",

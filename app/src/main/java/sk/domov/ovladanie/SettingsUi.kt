@@ -365,7 +365,7 @@ internal fun SettingsNotifyPage(onBack: () -> Unit, onPage: (String) -> Unit) {
         DomovCard(padding = 10.dp, spacing = 0.dp) {
             SettingRow(
                 CartIcon, "Zmeny v spoločnom nákupe",
-                caption = if (shopNotify) "Zapnuté · keď člen domácnosti upraví spoločný zoznam, aj na zamknutej obrazovke"
+                caption = if (shopNotify) "Zapnuté · notifikácia (aj na zamknutej obrazovke), v otvorenom zozname malý banner"
                 else "Vypnuté · zoznam sa obnoví až po otvorení appky",
                 onClick = { setShopNotify(!shopNotify) },
                 trailing = { DomovSwitch(checked = shopNotify, onCheckedChange = { setShopNotify(it) }) },

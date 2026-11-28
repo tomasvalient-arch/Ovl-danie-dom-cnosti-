@@ -132,6 +132,32 @@ fun main() {
     val l3 = ShoppingChanges.lines((1..9).map { ch(ShopChangeKind.ADDED, "V$it") })
     check("viac riadkov ako sa zmestí: posledné a počet zvyšku", l3.first.size == ShoppingChanges.MAX_LINES && l3.first.last() == "Pridané: V9" && l3.second == 3)
 
+    // ---- banner v appke (otvorený spoločný nákup)
+    check("banner: bez mena", ShoppingChanges.who(listOf(ch(ShopChangeKind.ADDED, "A", who = ""))) == "Spoločný nákup")
+    check("banner: jedno meno", ShoppingChanges.who(listOf(ch(ShopChangeKind.ADDED, "A"))) == "Katka")
+    check("banner: dve mená", ShoppingChanges.who(listOf(ch(ShopChangeKind.ADDED, "A"), ch(ShopChangeKind.ADDED, "B", who = "Tomáš"))) == "Katka, Tomáš")
+    check(
+        "banner: tri a viac mien sa skráti",
+        ShoppingChanges.who(listOf(ch(ShopChangeKind.ADDED, "A"), ch(ShopChangeKind.ADDED, "B", who = "Tomáš"), ch(ShopChangeKind.ADDED, "C", who = "Mama"))) == "Katka, Tomáš a ďalší",
+    )
+    val hot = ShoppingChanges.highlightKeys(
+        listOf(
+            ch(ShopChangeKind.ADDED, "Mlieko 2 l"),
+            ch(ShopChangeKind.DONE, "Šalát"),
+            ch(ShopChangeKind.RENAMED, "Maslo", old = "Mls"),
+            ch(ShopChangeKind.REMOVED, "Chlieb"),
+        ),
+    )
+    check("podsvietenie: názvy bez diakritiky a veľkých písmen", hot == setOf("mlieko 2 l", "salat", "maslo"))
+    check("podsvietenie: odstránená vec riadok nemá", "chlieb" !in hot)
+    check("podsvietenie: prázdne zmeny = nič", ShoppingChanges.highlightKeys(emptyList()).isEmpty())
+    // banner zbiera zmeny ako notifikácia: pridané a hneď odstránené sa vyruší, banner vtedy zmizne
+    val b1 = ShoppingChanges.accumulate(emptyList(), listOf(ch(ShopChangeKind.ADDED, "Mlieko")), 1_000_000L)
+    val b2 = ShoppingChanges.accumulate(b1, listOf(ch(ShopChangeKind.REMOVED, "mlieko")), 1_002_000L)
+    check("banner: pridané a hneď odstránené = prázdny banner", b2.isEmpty())
+    val b3 = ShoppingChanges.accumulate(b1, listOf(ch(ShopChangeKind.ADDED, "Maslo")), 1_002_000L)
+    check("banner: rýchle zmeny idú do jedného bannera", ShoppingChanges.summary(b3) == "Pridané: Mlieko, Maslo")
+
     // ---- uloženie
     val saved = listOf(
         ch(ShopChangeKind.ADDED, "Mlieko"),

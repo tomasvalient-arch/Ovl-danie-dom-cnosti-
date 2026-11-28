@@ -126,6 +126,23 @@ object ShoppingChanges {
         }
     }
 
+    /** Kto zmeny urobil, ako krátky popisok bannera v appke: „Katka“, „Katka, Tomáš“, bez mena „Spoločný nákup“. */
+    fun who(changes: List<ShopChange>): String {
+        val names = actors(changes)
+        return when {
+            names.isEmpty() -> "Spoločný nákup"
+            names.size <= 2 -> names.joinToString(", ")
+            else -> "${names[0]}, ${names[1]} a ďalší"
+        }
+    }
+
+    /**
+     * Ktoré riadky zoznamu sa majú na chvíľu podsvietiť (názvy bez diakritiky a veľkých písmen). Odstránená vec
+     * riadok nemá, takže sa nepodsvieti.
+     */
+    fun highlightKeys(changes: List<ShopChange>): Set<String> =
+        changes.filter { it.kind != ShopChangeKind.REMOVED }.map { fold(it.name) }.toSet()
+
     /**
      * Jednoriadkový súhrn pre zbalenú notifikáciu a zamknutú obrazovku. Jedna zmena = jej riadok; viac zmien sa
      * zoskupí podľa druhu: „Pridané: Mlieko, Chlieb, Syr +2 · Kúpené: Maslo“.
