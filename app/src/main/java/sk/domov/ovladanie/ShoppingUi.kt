@@ -216,6 +216,14 @@ internal fun ShoppingScreen(onBack: () -> Unit, initialView: ShopView? = null) {
         onDispose { ShoppingStore.unlisten(context, listener) }
     }
 
+    // spoločný zoznam je na očiach: zmeny od druhého telefónu vidno hneď, notifikácia netreba (a staré zmeny sa zrušia)
+    val sharedVisible = view != ShopView.MINE
+    DisposableEffect(sharedVisible) {
+        ShoppingNotify.screenOpen = sharedVisible
+        if (sharedVisible) ShoppingNotify.markSeen(context)
+        onDispose { ShoppingNotify.screenOpen = false }
+    }
+
     val visibleKind = view.kind
     val visible = if (visibleKind == null) items else items.filter { it.list == visibleKind }
     val targetItems = items.filter { it.list == target }

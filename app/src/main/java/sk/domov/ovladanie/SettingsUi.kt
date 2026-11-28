@@ -340,6 +340,15 @@ internal fun SettingsNotifyPage(onBack: () -> Unit, onPage: (String) -> Unit) {
     val brief = remember { MorningBriefStore.enabled(context) to MorningBriefStore.time(context) }
     val notifyTick = rememberPresenceTick()
     val notifyDoneNow = remember(notifyTick) { runCatching { PresenceStore.config(context).notifyDone }.getOrDefault(false) }
+    var shopNotify by remember { mutableStateOf(ShoppingNotify.enabled(context)) }
+
+    fun setShopNotify(on: Boolean) {
+        shopNotify = on
+        ShoppingNotify.setEnabled(context, on)
+        if (on && Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
 
     SettingsSubPage("Upozornenia", onBack, subtitle = "Čo ti appka posiela") {
         SectionLabel("Ranný prehľad")
@@ -349,6 +358,17 @@ internal fun SettingsNotifyPage(onBack: () -> Unit, onPage: (String) -> Unit) {
                 caption = if (brief.first) "Zapnutý · každé ráno o ${clockMinutes(brief.second)} · počasie, udalosti, nákup"
                 else "Vypnutý · jedna notifikácia ráno, len v tomto telefóne",
                 onClick = { onPage(AutoPage.BRIEF) },
+            )
+        }
+
+        SectionLabel("Spoločný nákup")
+        DomovCard(padding = 10.dp, spacing = 0.dp) {
+            SettingRow(
+                CartIcon, "Zmeny v spoločnom nákupe",
+                caption = if (shopNotify) "Zapnuté · keď člen domácnosti upraví spoločný zoznam, aj na zamknutej obrazovke"
+                else "Vypnuté · zoznam sa obnoví až po otvorení appky",
+                onClick = { setShopNotify(!shopNotify) },
+                trailing = { DomovSwitch(checked = shopNotify, onCheckedChange = { setShopNotify(it) }) },
             )
         }
 

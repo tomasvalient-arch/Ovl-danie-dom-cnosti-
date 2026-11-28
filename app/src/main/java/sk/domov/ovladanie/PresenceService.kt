@@ -672,6 +672,7 @@ class PresenceService : Service() {
         }
         runCatching { ensureFryerJob() }
         runCatching { ChatEngine.startListening(this); ChatEngine.schedule(this) }
+        runCatching { HouseSyncEngine.startListening(this) }
         when (intent?.action) {
             ACTION_TICK -> scope.launch { onEvent(PresenceEvent.Tick(System.currentTimeMillis())) }
             ACTION_GUARD -> scope.launch { runGuardFromAlarm() }
@@ -1025,6 +1026,7 @@ class PresenceService : Service() {
     internal fun reloadWhileRunning() {
         runCatching { ensureFryerJob() }
         runCatching { ChatEngine.startListening(this); ChatEngine.schedule(this) }
+        runCatching { HouseSyncEngine.startListening(this) }
         scope.launch {
             ensureHousehold()
             mutex.withLock { reschedule(PresenceStore.status(this@PresenceService)) }
@@ -1120,6 +1122,7 @@ class PresenceReceiver : BroadcastReceiver() {
                 ChatEngine.schedule(context)
                 ChatEngine.startListening(context)
                 ChatEngine.request(context)
+                runCatching { HouseSyncEngine.startListening(context) }
                 EventReminders.check(context)
                 runCatching { MealPromptAlarm.schedule(context) }
                 // ranný prehľad: nastaviť budík a poslať, ak telefón bol ráno vypnutý (len keď je zapnutý)

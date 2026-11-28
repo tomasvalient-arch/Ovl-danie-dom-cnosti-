@@ -7,8 +7,21 @@ import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.net.URL
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.coroutineContext
 
 /**
  * Behová synchronizácia kalendára, nákupu a jedálnička cez ntfy.sh.
@@ -25,6 +38,11 @@ object HouseSyncEngine {
     const val BASE = "https://ntfy.sh"
     private const val SNAPSHOT_EVERY_MS = 6L * 60 * 60 * 1000
     private const val WANT_EVERY_MS = 30L * 60 * 1000
+    /**
+     * Po pripojení do domácnosti (alebo po inštalácii) príde z druhého telefónu celý zoznam naraz. Toto okno ho nechá
+     * stiahnuť bez upozornení („pridaných 30 vecí“); skončí hneď po prvej dávke záznamov alebo po tomto čase.
+     */
+    private const val QUIET_WINDOW_MS = 45L * 60 * 1000
 
     @Volatile var applying: Boolean = false
         private set
@@ -82,6 +100,125 @@ object HouseSyncEngine {
         Thread { runLocked(app) }.start()
     }
 
+    // ------------------------------------------------------------------ živé počúvanie (od 1.68)
+
+    private val listenScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val listenLock = Any()
+    private var listenJob: Job? = null
+    @Volatile private var listenConn: HttpURLConnection? = null
+    private val kickPending = AtomicBoolean(false)
+
+    /**
+     * Drží otvorený stream na téme ntfy: keď iný telefón domácnosti pošle zmenu (alebo žiadosť o zoznam), spustí sa
+     * hneď synchronizácia. Bez toho by sa zmeny zo spoločného nákupu objavili až po otvorení appky alebo pri
+     * 15-minútovom behu na pozadí. Stream len „zobudí“ synchronizáciu, samotné stiahnutie, kurzor a zlúčenie robí
+     * [syncNow] ako doteraz. Beží, kým žije proces appky (napr. v službe Príchod a odchod).
+     */
+    fun startListening(c: Context) {
+        if (!active(c)) return
+        synchronized(listenLock) {
+            if (listenJob?.isActive == true) return
+            val app = c.applicationContext
+            listenJob = listenScope.launch { listenLoop(app) }
+        }
+    }
+
+    /** Kľúč domácnosti sa zmenil: stream na starej téme zrušiť (zavrie sa spojenie) a začať odznova na novej. */
+    fun restartListening(c: Context) {
+        synchronized(listenLock) {
+            listenJob?.cancel()
+            listenJob = null
+            runCatching { listenConn?.disconnect() }
+        }
+        startListening(c)
+    }
+
+    /**
+     * Správy prichádzajú po dávkach (zoznam sa posiela vo viacerých správach): spojí ich do jednej synchronizácie.
+     * Značka sa zhodí pred behom, takže správa, čo príde počas synchronizácie, spustí ďalšiu a nič sa nestratí.
+     */
+    private fun kick(c: Context) {
+        if (!kickPending.compareAndSet(false, true)) return
+        val app = c.applicationContext
+        Thread {
+            try {
+                Thread.sleep(600)
+            } catch (_: InterruptedException) {
+            }
+            kickPending.set(false)
+            runLocked(app)
+        }.start()
+    }
+
+    /** Je riadok zo streamu správa od iného telefónu, ktorá si žiada synchronizáciu (zmeny alebo žiadosť o zoznam)? */
+    private fun wakesSync(line: String, aes: ByteArray, selfId: String): Boolean {
+        if (line.isBlank()) return false
+        val msg = try { JSONObject(line) } catch (_: Exception) { return false }
+        if (msg.optString("event") != "message") return false
+        val token = msg.optString("message")
+        if (token.isBlank()) return false
+        val plain = HouseSync.decryptText(token, aes) ?: return false
+        val env = HouseSync.parseEnvelope(plain) ?: return false
+        if (env.optString("f") == selfId) return false
+        return env.optString("t") == HouseSync.TYPE_ITEMS || env.optString("t") == HouseSync.TYPE_WANT
+    }
+
+    private suspend fun listenLoop(c: Context) {
+        var backoff = 2_000L
+        var byTime = false
+        while (coroutineContext.isActive) {
+            if (!active(c)) {
+                delay(15_000)
+                continue
+            }
+            var conn: HttpURLConnection? = null
+            try {
+                val key = HouseholdStore.key(c)
+                val topic = HouseSync.topic(key)
+                val aes = HouseSync.aesKey(key)
+                val self = HouseholdStore.phoneId(c)
+                val cursor = prefs(c).getString("cursor", "").orEmpty().trim()
+                // od posledne spracovanej správy; bez nej (alebo keď ju ntfy odmietne) od pred 2 minútami
+                val since = if (cursor.isNotEmpty() && !byTime) cursor else (System.currentTimeMillis() / 1000 - 120).toString()
+                val http = URL("$BASE/$topic/json?since=$since").openConnection() as HttpURLConnection
+                http.requestMethod = "GET"
+                http.connectTimeout = 15_000
+                // ntfy posiela „keepalive“ asi každých 45 s; ticho dlhšie ako toto = mŕtve spojenie (zmena siete, spánok)
+                http.readTimeout = 150_000
+                http.useCaches = false
+                http.setRequestProperty("User-Agent", userAgent())
+                conn = http
+                listenConn = http
+                val code = http.responseCode
+                if (code !in 200..299) {
+                    if (code == 400) byTime = true
+                    delay(backoff)
+                    backoff = (backoff * 2).coerceAtMost(60_000L)
+                    continue
+                }
+                backoff = 2_000L
+                byTime = false
+                val reader = http.inputStream.bufferedReader(Charsets.UTF_8)
+                while (coroutineContext.isActive && active(c)) {
+                    val line = reader.readLine() ?: break
+                    if (wakesSync(line, aes, self)) kick(c)
+                }
+                // server spojenie zavrel: krátka pauza a znova
+                delay(1_000)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: SocketTimeoutException) {
+                delay(1_000)
+            } catch (_: Exception) {
+                delay(backoff)
+                backoff = (backoff * 2).coerceAtMost(60_000L)
+            } finally {
+                runCatching { conn?.disconnect() }
+                if (listenConn === conn) listenConn = null
+            }
+        }
+    }
+
     /** Jedna synchronizácia so zámkom; chybu zapíše aj keď zlyhá JobScheduler. */
     internal fun runLocked(c: Context) {
         synchronized(syncMutex) {
@@ -109,8 +246,27 @@ object HouseSyncEngine {
 
     /** Volať po prijatí kľúča domácnosti: požiadať druhý telefón o úplný prehľad. */
     fun requestSnapshot(c: Context) {
-        prefs(c).edit().putLong("want_at", 0L).putLong("snap_at", 0L).apply()
+        // prvá dávka z novej domácnosti je celý zoznam: bez upozornení na „pridané“ veci
+        prefs(c).edit().putLong("want_at", 0L).putLong("snap_at", 0L).putLong("quiet_at", System.currentTimeMillis()).apply()
         request(c)
+    }
+
+    /**
+     * Je to prvé stiahnutie zoznamu (nová inštalácia alebo nová domácnosť)? Vtedy sa o zmenách nákupu neupozorňuje.
+     * Telefón, ktorý sa už raz úspešne synchronizoval (aj pred touto verziou), je hneď „zabehnutý“.
+     */
+    private fun isQuiet(p: SharedPreferences, now: Long): Boolean {
+        if (!p.contains("quiet_at")) {
+            val fresh = p.getLong("ok_at", 0L) == 0L
+            p.edit().putLong("quiet_at", if (fresh) now else -1L).apply()
+            return fresh
+        }
+        val at = p.getLong("quiet_at", -1L)
+        return at > 0 && now - at < QUIET_WINDOW_MS
+    }
+
+    private fun endQuiet(p: SharedPreferences) {
+        if (p.getLong("quiet_at", -1L) != -1L) p.edit().putLong("quiet_at", -1L).apply()
     }
 
     internal fun syncNow(c: Context) {
@@ -125,6 +281,7 @@ object HouseSyncEngine {
             val p = prefs(c)
             val now = System.currentTimeMillis()
 
+            val quiet = isQuiet(p, now)
             val cursor = p.getString("cursor", "").orEmpty()
             val since = HouseSync.sinceParam(cursor)
             var get = poll(topic, since)
@@ -163,7 +320,10 @@ object HouseSyncEngine {
                     val parts = try { JSONObject(p.getString("parts", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
                     val (partsNext, whole) = HouseSync.reassemble(parts, incoming, now)
                     if (partsNext.toString() != parts.toString()) p.edit().putString("parts", partsNext.toString()).commit()
-                    if (whole.isNotEmpty()) applyIncoming(c, whole)
+                    if (whole.isNotEmpty()) {
+                        applyIncoming(c, whole, quiet)
+                        endQuiet(p)
+                    }
                 } catch (e: Exception) {
                     android.util.Log.w("Domov", "sync apply", e)
                     markError(c, "spracovanie správy: ${describeError(e)}")
@@ -253,7 +413,7 @@ object HouseSyncEngine {
         return true
     }
 
-    private fun applyIncoming(c: Context, incoming: List<JSONObject>) {
+    private fun applyIncoming(c: Context, incoming: List<JSONObject>, quiet: Boolean = false) {
         val now = System.currentTimeMillis()
         val prunedIn = HouseSync.pruneTombstones(incoming, now)
         val evIn = ArrayList<EventItem>()
@@ -271,17 +431,20 @@ object HouseSyncEngine {
             }
         }
         if (evIn.isEmpty() && shIn.isEmpty() && recIn.isEmpty() && mealIn.isEmpty() && panIn.isEmpty()) return
+        var shopChanges: List<ShopChange> = emptyList()
         synchronized(lock) { applying = true }
         try {
             // zlúčenie prebehne atomicky v úložisku (aktuálny stav + LWW v jednom zámku)
             if (evIn.isNotEmpty()) EventsStore.mergeIncoming(c, evIn)
-            if (shIn.isNotEmpty()) ShoppingStore.mergeIncoming(c, shIn)
+            if (shIn.isNotEmpty()) shopChanges = ShoppingStore.mergeIncomingChanges(c, shIn)
             if (recIn.isNotEmpty()) MealsStore.mergeIncomingRecipes(c, recIn)
             if (mealIn.isNotEmpty()) MealsStore.mergeIncomingMeals(c, mealIn)
             if (panIn.isNotEmpty()) MealsStore.mergeIncomingPantry(c, panIn)
         } finally {
             synchronized(lock) { applying = false }
         }
+        // upozornenie až po zlúčení a mimo zámku; chyba upozornenia nesmie pokaziť synchronizáciu
+        if (!quiet && shopChanges.isNotEmpty()) runCatching { ShoppingNotify.onRemoteChanges(c, shopChanges) }
     }
 
     private fun allRecords(c: Context): List<JSONObject> {

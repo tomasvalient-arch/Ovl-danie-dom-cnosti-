@@ -56,8 +56,16 @@ class MainActivity : ComponentActivity() {
         return null
     }
 
+    override fun onPause() {
+        ShoppingNotify.appForeground = false
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        // človek je v appke: ak má otvorený spoločný nákup, zmeny od druhého telefónu už vidí (notifikácia sa zruší)
+        ShoppingNotify.appForeground = true
+        if (ShoppingNotify.screenOpen) runCatching { ShoppingNotify.markSeen(this) }
         // Automatika musí bežať vždy, keď je zapnutá: po aktualizácii appky ju niektoré telefóny (napr. Xiaomi bez
         // „Automatického spúšťania“) nespustia, kým sa appka neotvorí. Na popredí to Android dovolí vždy.
         if (!PresenceService.isRunning) runCatching { PresenceService.sync(this) }
@@ -71,6 +79,7 @@ class MainActivity : ComponentActivity() {
         runCatching { MealPromptAlarm.schedule(this) }
         runCatching { HouseSyncEngine.schedule(this) }
         runCatching { HouseSyncEngine.request(this) }
+        runCatching { HouseSyncEngine.startListening(this) }
         runCatching { ChatEngine.schedule(this) }
         runCatching { ChatEngine.startListening(this) }
         runCatching { ChatEngine.request(this) }

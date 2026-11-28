@@ -67,6 +67,9 @@ java -jar "$OUT/meniny.jar"
 # nákupný zoznam
 kotlinc -cp "$JSON" $S/Shopping.kt tools/ShoppingTest.kt -include-runtime -d "$OUT/shopping.jar" 2>/dev/null
 java -cp "$OUT/shopping.jar:$JSON" ShoppingTestKt
+# upozornenia na zmeny spoločného nákupu (1.68)
+kotlinc -cp "$JSON" $S/Shopping.kt $S/ShoppingChanges.kt tools/ShoppingNotifyTest.kt -include-runtime -d "$OUT/shopnotify.jar" 2>/dev/null
+java -cp "$OUT/shopnotify.jar:$JSON" ShoppingNotifyTestKt
 # ranný prehľad: skladanie textu notifikácie, výpadky zdrojov, zapnuté zariadenia, plánovanie
 kotlinc -cp "$OUT/stubs:$JSON" $PURE $S/Events.kt $S/Meniny.kt $S/Shopping.kt $S/MorningBrief.kt tools/MorningBriefTest.kt -include-runtime -d "$OUT/morningbrief.jar" 2>/dev/null
 java -cp "$OUT/morningbrief.jar:$OUT/stubs:$JSON" MorningBriefTestKt

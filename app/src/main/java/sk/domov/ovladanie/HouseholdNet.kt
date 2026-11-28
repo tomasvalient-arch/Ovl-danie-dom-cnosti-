@@ -57,6 +57,8 @@ object HouseholdStore {
         PresenceService.sync(context)
         HouseSyncEngine.schedule(context)
         HouseSyncEngine.requestSnapshot(context)
+        // živé počúvanie zmien zoznamov: na novej téme hneď, nie až po ďalšom otvorení appky
+        runCatching { HouseSyncEngine.restartListening(context) }
         // chat: počúvať na novej téme hneď (správy mohli byť poslané ešte pred pripojením), nie až po otvorení záložky Chat
         runCatching { ChatEngine.restartListening(context); ChatEngine.schedule(context); ChatEngine.request(context) }
         return true

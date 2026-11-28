@@ -110,6 +110,11 @@
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
+        <!-- odsunutie notifikácie o zmenách v spoločnom nákupe (od 1.68) -->
+        <receiver
+            android:name=".ShoppingNotifyReceiver"
+            android:exported="false" />
+
         <service
             android:name=".ChatJobService"
             android:exported="false"

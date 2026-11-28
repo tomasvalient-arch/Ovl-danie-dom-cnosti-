@@ -79,9 +79,20 @@ object ShoppingStore {
      * aby súbežné [update] nestratilo miestnu úpravu. Súkromná položka (MINE) s rovnakým id sa neprepisuje.
      */
     @Synchronized
-    fun mergeIncoming(c: Context, incoming: List<ShopItem>): Boolean {
-        if (incoming.isEmpty()) return false
+    fun mergeIncoming(c: Context, incoming: List<ShopItem>): Boolean = merge(c, incoming).first
+
+    /**
+     * To isté čo [mergeIncoming], ale vráti aj zmeny, ktoré v spoločnom zozname urobil iný telefón (od 1.68):
+     * z nich sa robí upozornenie. Zmeny sa počítajú v tom istom zámku ako zlúčenie, takže „predtým“ a „potom“ sedia presne.
+     */
+    @Synchronized
+    fun mergeIncomingChanges(c: Context, incoming: List<ShopItem>): List<ShopChange> = merge(c, incoming).second
+
+    private fun merge(c: Context, incoming: List<ShopItem>): Pair<Boolean, List<ShopChange>> {
+        if (incoming.isEmpty()) return false to emptyList()
         val keep = all(c).associateBy { it.id }.toMutableMap()
+        val self = HouseholdStore.phoneId(c)
+        val changes = ArrayList<ShopChange>()
         var changed = false
         for (raw in incoming) {
             if (raw.id.isBlank()) continue
@@ -92,16 +103,17 @@ object ShoppingStore {
                 if (existing != item) {
                     keep[item.id] = item
                     changed = true
+                    ShoppingChanges.change(existing, item, self)?.let { changes += it }
                 }
             }
         }
-        if (!changed) return false
+        if (!changed) return false to emptyList()
         val now = System.currentTimeMillis()
         val pruned = keep.values.filter { !it.deleted || now - it.updatedAt < HouseSync.TOMBSTONE_MS }
         prefs(c).edit().putString(KEY, ShoppingList.toJson(pruned)).apply()
         ShoppingWidget.redrawAll(c)
         DnesWidget.redrawAll(c)
-        return true
+        return true to changes
     }
 
     /** Sledovanie zmien zoznamu (napr. odškrtnutie z widgetu, kým je obrazovka Nákup otvorená). Listener drž v pamäti. */
